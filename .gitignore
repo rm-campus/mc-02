@@ -1,0 +1,24 @@
+# Build output and local editor settings
+**/build/
+**/cmake-build-*/
+**/.idea/
+**/.vscode/
+**/.codex-backups/
+**/__pycache__/
+**/tests/host-build/
+*.pyc
+*.bak
+*.before-*
+*.tmp
+*.o
+*.obj
+*.elf
+*.hex
+*.map
+*.d
+*.dep
+*.su
+*.swo
+*.swp
+Thumbs.db
+.DS_Store
