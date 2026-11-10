@@ -73,6 +73,23 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/motor_3508.c
     Bsp/Src/fxi6x.c
     Bsp/Src/led.c
+    Bsp/Src/usb_serial.c
+    Bsp/Src/bmi088.c
+    Bsp/Src/imu_clock.c
     App/Src/campus_app.c
+    App/Src/usb_app.c
+    App/Src/imu_app.c
+    Algorithm/Src/imu_filter.c
+    Algorithm/Src/QuaternionEKFc.c
+    Algorithm/Src/kalman_filter.c
+    Drivers/CMSIS/DSP/Source/MatrixFunctions/arm_mat_init_f32.c
+    Drivers/CMSIS/DSP/Source/MatrixFunctions/arm_mat_add_f32.c
+    Drivers/CMSIS/DSP/Source/MatrixFunctions/arm_mat_sub_f32.c
+    Drivers/CMSIS/DSP/Source/MatrixFunctions/arm_mat_mult_f32.c
+    Drivers/CMSIS/DSP/Source/MatrixFunctions/arm_mat_trans_f32.c
+    Drivers/CMSIS/DSP/Source/MatrixFunctions/arm_mat_inverse_f32.c
 )
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE Bsp/Inc App/Inc)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    Bsp/Inc App/Inc Algorithm/Inc Drivers/CMSIS/DSP/Include
+)
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ARM_MATH_MATRIX_CHECK)

@@ -97,7 +97,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t flags)
 }
 
 /**
- * @brief 最高优先级的遥控接收处理任务。
+ * @brief 高优先级的遥控接收处理任务（低于有界的 IMU 采集/解算任务）。
  * 初始化失败时休眠后重试；正常时阻塞等待接收事件，不持续轮询占用 CPU。
  * 接收异常的重启和协议解析均由本任务处理，IRQ 只负责搬运字节并通知。
  */

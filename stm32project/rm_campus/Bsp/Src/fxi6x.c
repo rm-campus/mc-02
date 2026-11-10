@@ -11,6 +11,7 @@
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include <math.h>
 #include <string.h>
 
 /* DMA 持续循环写入 256 字节；半满/全满事件保证持续数据流也能被及时取走。 */
@@ -59,9 +60,9 @@ static void notify_task(void)
  */
 static void clear_controls(void)
 {
-    s_data.rocker_l_h = s_data.rocker_l_v = 0.0f;
-    s_data.rocker_r_h = s_data.rocker_r_v = 0.0f;
-    s_data.knob_l = s_data.knob_r = 0.0f;
+    s_data.rocker_l_h = s_data.rocker_l_v = 0;
+    s_data.rocker_r_h = s_data.rocker_r_v = 0;
+    s_data.knob_l = s_data.knob_r = 0;
     s_data.switch_a = s_data.switch_b = FXI6X_HIGH;
     s_data.switch_c = s_data.switch_d = FXI6X_HIGH;
     s_data.valid = false;
@@ -172,22 +173,24 @@ static int16_t channel(const uint8_t *frame, uint8_t index)
 }
 
 /**
- * @brief 按参考遥控端点换算为 -1～1 的浮点量。
+ * @brief 按使用文档将参考遥控端点映射到 -660～660 的整数。
  * 正端点 783、负端点 -784 不对称，因此两侧使用不同除数。
+ * 与文档一致使用 floorf(x + 0.5f) 取整，负数半整数向正方向舍入。
  * 调用前 decode 已检查范围；本函数不另做饱和限幅。
  */
-static float normalize(int16_t value)
+static int16_t map_to_660(int16_t value)
 {
-    return value >= 0 ? (float)value / 783.0f : (float)value / 784.0f;
+    float scale = value >= 0 ? 660.0f / 783.0f : 660.0f / 784.0f;
+    return (int16_t)floorf(scale * (float)value + 0.5f);
 }
 
 /**
- * @brief 用 ±392 阈值将辅助通道分为三个软件档位。
- * 当前负值对应 HIGH，正值对应 LOW；需在实际遥控器上核对物理拨动方向。
+ * @brief 按文档用辅助通道的符号区分档位，不设置中位容差。
+ * 负值对应 HIGH(1)，零对应 MIDDLE(0)，正值对应 LOW(-1)。
  */
-static uint8_t switch_value(int16_t value)
+static int8_t switch_value(int16_t value)
 {
-    return value < -392 ? FXI6X_HIGH : (value > 392 ? FXI6X_LOW : FXI6X_MIDDLE);
+    return value < 0 ? FXI6X_HIGH : (value > 0 ? FXI6X_LOW : FXI6X_MIDDLE);
 }
 
 /**
@@ -219,12 +222,12 @@ static bool decode(void)
         clear_controls();
         return false;
     }
-    s_data.rocker_r_h = normalize(ch[0]);
-    s_data.rocker_r_v = normalize(ch[1]);
-    s_data.rocker_l_v = normalize(ch[2]);
-    s_data.rocker_l_h = normalize(ch[3]);
-    s_data.knob_l = normalize(ch[4]);
-    s_data.knob_r = normalize(ch[5]);
+    s_data.rocker_r_h = map_to_660(ch[0]);
+    s_data.rocker_r_v = map_to_660(ch[1]);
+    s_data.rocker_l_v = map_to_660(ch[2]);
+    s_data.rocker_l_h = map_to_660(ch[3]);
+    s_data.knob_l = map_to_660(ch[4]);
+    s_data.knob_r = map_to_660(ch[5]);
     s_data.switch_a = switch_value(ch[6]);
     s_data.switch_b = switch_value(ch[7]);
     s_data.switch_c = switch_value(ch[8]);

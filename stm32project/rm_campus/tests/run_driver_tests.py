@@ -39,7 +39,6 @@ uint32_t HAL_GetTick(void);
 ''', encoding='utf-8')
 (out / 'test.c').write_text(r'''
 #include <assert.h>
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "usart.h"
@@ -83,14 +82,61 @@ static void feed(const uint8_t *p, unsigned n)
     HAL_UARTEx_RxEventCallback(&huart5, dma_pos ? dma_pos : dma_size);
 }
 
-static void make_frame(uint8_t f[25])
+static void pack_frame(uint8_t f[25], const unsigned ch[16])
 {
-    unsigned ch[16] = {1807, 240, 1124, 1024, 1024, 1024, 200, 1800, 1024, 200,
-                       1024, 1024, 1024, 1024, 1024, 1024};
     memset(f, 0, 25); f[0] = 0x0F;
     for (unsigned i = 0; i < 16; ++i)
         for (unsigned b = 0; b < 11; ++b)
             if (ch[i] & (1U << b)) f[1 + (i * 11 + b) / 8] |= 1U << ((i * 11 + b) % 8);
+}
+
+static void make_frame(uint8_t f[25])
+{
+    const unsigned ch[16] = {1807, 240, 1124, 1024, 1024, 1024, 200, 1800, 1024, 200,
+                            1024, 1024, 1024, 1024, 1024, 1024};
+    pack_frame(f, ch);
+}
+
+static void test_document_values(void)
+{
+    /* 手工期望值覆盖端点、中心、正负取整；-98 映射为 -82.5，按文档取 -82。 */
+    const int16_t input[] = {-784, -588, -98, -1, 0, 1, 391, 783};
+    const int16_t expected[] = {-660, -495, -82, -1, 0, 1, 330, 660};
+    const int16_t switch_input[] = {-784, -1, 0, 1, 783};
+    const int8_t switch_expected[] = {1, 1, 0, -1, -1};
+    unsigned ch[16]; uint8_t f[25]; Fxi6x_Data rc;
+    assert(FXI6X_HIGH == 1 && FXI6X_MIDDLE == 0 && FXI6X_LOW == -1);
+    for (unsigned n = 0; n < 8; ++n)
+    {
+        for (unsigned i = 0; i < 16; ++i) ch[i] = 1024;
+        for (unsigned i = 0; i < 6; ++i) ch[i] = (unsigned)(1024 + input[(n + i) % 8]);
+        for (unsigned i = 0; i < 4; ++i) ch[6 + i] = (unsigned)(1024 + switch_input[(n + i) % 5]);
+        pack_frame(f, ch); ++tick; feed(f, 25);
+        assert(Fxi6x_Update()); Fxi6x_CopyData(&rc);
+        assert(rc.valid && rc.last_valid_ms == tick);
+        /* 按文档 CH1～CH10 顺序检查字段，轮换输入以覆盖每个通道与开关。 */
+        const int16_t actual[] = {rc.rocker_r_h, rc.rocker_r_v, rc.rocker_l_v,
+                                  rc.rocker_l_h, rc.knob_l, rc.knob_r};
+        const int8_t switches[] = {rc.switch_a, rc.switch_b, rc.switch_c, rc.switch_d};
+        for (unsigned i = 0; i < 6; ++i) assert(actual[i] == expected[(n + i) % 8]);
+        for (unsigned i = 0; i < 4; ++i) assert(switches[i] == switch_expected[(n + i) % 5]);
+    }
+    /* 保留原有越界拒收策略：任一模拟通道超出参考端点，整帧无效且时间戳不刷新。 */
+    const uint32_t last_valid = rc.last_valid_ms;
+    for (unsigned i = 0; i < 6; ++i)
+    {
+        for (unsigned end = 0; end < 2; ++end)
+        {
+            for (unsigned j = 0; j < 16; ++j) ch[j] = 1024;
+            ch[i] = end == 0 ? 239 : 1808;
+            pack_frame(f, ch); ++tick; feed(f, 25);
+            assert(!Fxi6x_Update()); Fxi6x_CopyData(&rc);
+            assert(!rc.valid && rc.last_valid_ms == last_valid);
+            assert(rc.rocker_r_h == 0 && rc.rocker_r_v == 0 && rc.rocker_l_v == 0 &&
+                   rc.rocker_l_h == 0 && rc.knob_l == 0 && rc.knob_r == 0);
+        }
+    }
+    make_frame(f); feed(f, 25); assert(Fxi6x_Update());
 }
 
 int main(void)
@@ -101,8 +147,8 @@ int main(void)
     feed(f, 7); assert(!Fxi6x_Update());
     feed(f + 7, 18); assert(Fxi6x_Update()); Fxi6x_CopyData(&rc);
     assert(rc.valid && rc.received && rc.last_valid_ms == tick);
-    assert(fabsf(rc.rocker_r_h - 1.0f) < 1e-6f);
-    assert(fabsf(rc.rocker_r_v + 1.0f) < 1e-6f);
+    assert(rc.rocker_r_h == 660);
+    assert(rc.rocker_r_v == -660);
     assert(rc.switch_a == FXI6X_HIGH && rc.switch_b == FXI6X_LOW && rc.switch_c == FXI6X_MIDDLE);
     for (unsigned n = 0; n < 30; ++n) { ++tick; feed(f, 25); assert(Fxi6x_Update()); }
     Fxi6x_CopyData(&rc); assert(rc.frame_count == 31); /* DMA 半满/全满跨界与重复事件。 */
@@ -117,6 +163,7 @@ int main(void)
     HAL_UART_ErrorCallback(&huart5); Fxi6x_Update(); Fxi6x_CopyData(&rc);
     assert(starts == 2 && rc.uart_error_count == 1 && !rc.valid);
     feed(f, 25); assert(Fxi6x_Update());
+    test_document_values();
 
     Motor3508 motor; Motor3508_Init(&motor, 1U);
     Motor3508_SetCurrent(&motor, 0, 20000);
@@ -136,7 +183,7 @@ int main(void)
     Motor3508_Update(&motor, 0x205, feedback, 8); assert(motor.last_feedback_ms[0] == old_tick);
     feedback[0] = 0x20; feedback[1] = 0;
     Motor3508_Update(&motor, 0x201, feedback, 8); assert(motor.last_feedback_ms[0] == old_tick);
-    puts("PASS: SBUS fragments, DMA wrap, flags, resync, overflow/recovery; M3508 limits, direction, packing, feedback/wrap.");
+    puts("PASS: SBUS document mapping/rounding, all 10 channels, signed switches, range checks, fragments, DMA wrap, flags, resync, overflow/recovery; M3508 limits, direction, packing, feedback/wrap.");
     return 0;
 }
 ''', encoding='utf-8')

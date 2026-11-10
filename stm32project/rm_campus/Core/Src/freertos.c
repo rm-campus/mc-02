@@ -26,7 +26,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "campus_app.h"
-  /* USER CODE END Includes */
+#include "usb_app.h"
+#include "imu_app.h"
+/* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
@@ -47,6 +49,20 @@
 /* USER CODE BEGIN Variables */
 
 /* USER CODE END Variables */
+/* Definitions for UsbTask */
+osThreadId_t UsbTaskHandle;
+const osThreadAttr_t UsbTask_attributes = {
+  .name = "UsbTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
+};
+/* Definitions for ImuTask */
+osThreadId_t ImuTaskHandle;
+const osThreadAttr_t ImuTask_attributes = {
+  .name = "ImuTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityHigh2,
+};
 /* Definitions for RcTask */
 osThreadId_t RcTaskHandle;
 const osThreadAttr_t RcTask_attributes = {
@@ -88,12 +104,15 @@ const osThreadAttr_t StatusTask_attributes = {
 
 /* USER CODE END FunctionPrototypes */
 
+void StartUsbTask(void *argument);
+void StartImuTask(void *argument);
 void StartRcTask(void *argument);
 void StartChassisTask(void *argument);
 void StartServoBusTask(void *argument);
 void StartMonitorTask(void *argument);
 void StartStatusTask(void *argument);
 
+extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* Hook prototypes */
@@ -152,6 +171,12 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
+  /* creation of UsbTask */
+  UsbTaskHandle = osThreadNew(StartUsbTask, NULL, &UsbTask_attributes);
+
+  /* creation of ImuTask */
+  ImuTaskHandle = osThreadNew(StartImuTask, NULL, &ImuTask_attributes);
+
   /* creation of RcTask */
   RcTaskHandle = osThreadNew(StartRcTask, NULL, &RcTask_attributes);
 
@@ -177,18 +202,46 @@ void MX_FREERTOS_Init(void) {
 
 }
 
+/* USER CODE BEGIN Header_StartUsbTask */
+/**
+  * @brief USB 初始化、收发队列服务和应用层接收入口。
+  * @note UsbTask 在 .ioc 任务列表中排第一，使 CubeMX 把 USB 初始化放在此任务。
+  */
+/* USER CODE END Header_StartUsbTask */
+void StartUsbTask(void *argument)
+{
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
+  /* USER CODE BEGIN StartUsbTask */
+  Campus_UsbTask(argument);
+  /* USER CODE END StartUsbTask */
+}
+
+/* USER CODE BEGIN Header_StartImuTask */
+/**
+  * @brief BMI088 采样、静止校准和姿态解算任务；本版本不接入恒温加热。
+  * @note 周期及重试逻辑由应用层管理，优先级高于底盘控制任务。
+  */
+/* USER CODE END Header_StartImuTask */
+void StartImuTask(void *argument)
+{
+  /* USER CODE BEGIN StartImuTask */
+  Campus_ImuTask(argument);
+  /* USER CODE END StartImuTask */
+}
+
 /* USER CODE BEGIN Header_StartRcTask */
 /**
   * @brief 遥控接收任务：UART5 循环 DMA、SBUS 解包及串口错误恢复。
   * @note 接收事件唤醒，10 ms 超时处理。
   * @param argument 未使用。
   */
-  /* USER CODE END Header_StartRcTask */
+/* USER CODE END Header_StartRcTask */
 void StartRcTask(void *argument)
 {
   /* USER CODE BEGIN StartRcTask */
   /* 进入应用层常驻循环：接收事件唤醒后组帧、解析，处理串口异常。该函数内部不会正常返回。 */
-Campus_RcTask(argument);
+  Campus_RcTask(argument);
   /* USER CODE END StartRcTask */
 }
 
@@ -198,7 +251,7 @@ Campus_RcTask(argument);
   * @note 1 ms 固定周期；麦轮解算和 PID 尚未接入。
   * @param argument 未使用。
   */
-  /* USER CODE END Header_StartChassisTask */
+/* USER CODE END Header_StartChassisTask */
 void StartChassisTask(void *argument)
 {
   /* USER CODE BEGIN StartChassisTask */
@@ -213,7 +266,7 @@ Campus_ChassisTask(argument);
   * @note 当前只休眠，不发送舵机指令。
   * @param argument 未使用。
   */
-  /* USER CODE END Header_StartServoBusTask */
+/* USER CODE END Header_StartServoBusTask */
 void StartServoBusTask(void *argument)
 {
   /* USER CODE BEGIN StartServoBusTask */
@@ -232,7 +285,7 @@ void StartServoBusTask(void *argument)
   * @note 10 ms 固定周期。
   * @param argument 未使用。
   */
-  /* USER CODE END Header_StartMonitorTask */
+/* USER CODE END Header_StartMonitorTask */
 void StartMonitorTask(void *argument)
 {
   /* USER CODE BEGIN StartMonitorTask */
@@ -247,7 +300,7 @@ Campus_MonitorTask(argument);
   * @note 50 ms 周期；本次不接入蜂鸣器。
   * @param argument 未使用。
   */
-  /* USER CODE END Header_StartStatusTask */
+/* USER CODE END Header_StartStatusTask */
 void StartStatusTask(void *argument)
 {
   /* USER CODE BEGIN StartStatusTask */

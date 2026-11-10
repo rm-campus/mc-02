@@ -53,27 +53,23 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0|GPIO_PIN_3, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, ACC_CS_Pin|GYRO_CS_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pins : PC0 PC3 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_3;
+  /*Configure GPIO pins : ACC_CS_Pin GYRO_CS_Pin */
+  GPIO_InitStruct.Pin = ACC_CS_Pin|GYRO_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PE10 PE12 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_12;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  /*Configure GPIO pins : ACC_INT_Pin GYRO_INT_Pin */
+  GPIO_InitStruct.Pin = ACC_INT_Pin|GYRO_INT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*AnalogSwitch Config */
   HAL_SYSCFG_AnalogSwitchConfig(SYSCFG_SWITCH_PC3, SYSCFG_SWITCH_PC3_CLOSE);
-
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 }
 
