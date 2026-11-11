@@ -12,7 +12,7 @@
 - MonitorTask 每 10 ms 更新状态，StatusTask 每 50 ms 更新 LED。
 - ServoBusTask 保留占位，不发送未知 UART 舵机协议。
 - ImuTask 每 1 ms 轮询 BMI088 并运行 C 版四元数 EKF；上电需保持静止完成 1000 样本校准。
-- UsbTask 服务 USB 收发队列并调用业务接收入口，默认不自动发送数据。
+- UsbTask 服务 USB 收发队列并调用业务接收入口，发送由应用层显式调用。
   IMU 接线、应用接口和错误码见 [IMU_INTEGRATION.md](IMU_INTEGRATION.md)。本次未接入恒温。
 
 这不是完整麦轮控制程序：尚未加入 PID、轮序/方向标定和运动学。
@@ -91,7 +91,7 @@ result = UsbSerial_Printf("speed=%d\r\n", speed);
 
 `App/Src/usb_app.c` 是明确的应用入口。`UsbTask` 持续服务收发队列，收到电脑数据后调用
 `Campus_UsbOnReceive(data, length)`，当前函数体为空。需要发送时由业务显式调用
-`UsbSerial_Send/Printf`。串口回传、IMU 自动输出及配套电脑接收脚本已移除。
+`UsbSerial_Send/Printf`。
 
 后续实现正式协议时，在 `Campus_UsbOnReceive(data, length)` 中处理数据。
 该函数运行于 UsbTask，参数仅在调用期间有效，默认不自动回复。
@@ -104,7 +104,39 @@ result = UsbSerial_Printf("speed=%d\r\n", speed);
 中显式列出；重新生成时应检查 USB 初始化仍只出现一次，并保留 UART 的 `.dma_rx` 段。
 
 默认线路参数继续为 **115200、8N1、无流控**；设置仅保存/返回，不改变 UART 或 USB
-传输速度。连接 MCU 原生 USB（PA11/PA12），业务尚未主动发送时串口没有输出属于预期行为。
+传输速度。连接 MCU 原生 USB（PA11/PA12），电脑端可通过对应 COM 口与业务协议通信。
 内部回归检查为
 `python tests/run_usb_serial_tests.py`（无需板卡、无需 pyserial，需要主机 GCC，可用
-`--cc <gcc路径>` 指定），覆盖队列、异步发送、重新枚举和默认不自动发送，不替代实板验证。
+`--cc <gcc路径>` 指定），覆盖队列、异步发送、重新枚举、格式化与应用收发，不替代实板验证。
+
+## 遥控通道映射与应用接口
+
+以下对应关系来自本机 2026-11-11 的实测，左右以正常手持、正对遥控器面板为准。
+驱动已将 SBUS 通道映射为物理控件字段，应用层通过 `Fxi6x_CopyData()` 获取快照：
+
+| SBUS 通道 | 实测控件 | `Fxi6x_Data` 字段 |
+|---|---|---|
+| CH1 | 右摇杆水平方向 | `rocker_r_h` |
+| CH2 | 左摇杆竖直方向 | `rocker_l_v` |
+| CH3 | 右摇杆竖直方向 | `rocker_r_v` |
+| CH4 | 左摇杆水平方向 | `rocker_l_h` |
+| CH5 | VRA 旋钮 | `knob_l` |
+| CH6 | VRB 旋钮 | `knob_r` |
+| CH7 | 从左至右第 1 个拨杆 | `switch_a` |
+| CH8 | 从左至右第 2 个拨杆 | `switch_b` |
+| CH9 | 从左至右第 3 个拨杆 | `switch_c` |
+| CH10 | 从左至右第 4 个拨杆 | `switch_d` |
+
+```c
+#include "fxi6x.h"
+
+/* 在应用任务中读取一次快照，然后使用表中的字段。 */
+Fxi6x_Data rc;
+Fxi6x_CopyData(&rc);
+/* rc.rocker_l_v 为 CH2 左摇杆竖直值，rc.rocker_r_v 为 CH3 右摇杆竖直值。
+ * rc.knob_l / rc.knob_r 对应 VRA / VRB；rc.switch_a～switch_d 对应从左至右四个拨杆。 */
+```
+
+摇杆和旋钮为 -660～660 的 `int16_t`；拨杆为 1/0/-1 的 `int8_t`。
+`valid` 仅代表最近一帧的解析结果，使用控制值前须同时检查接收历史和最后有效帧时间；
+应用层也可读取 `Campus_CopyStatus()` 中包含 100 ms 超时判断的 `rc_online`。

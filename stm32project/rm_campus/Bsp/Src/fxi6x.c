@@ -222,12 +222,14 @@ static bool decode(void)
         clear_controls();
         return false;
     }
-    s_data.rocker_r_h = map_to_660(ch[0]);
-    s_data.rocker_r_v = map_to_660(ch[1]);
-    s_data.rocker_l_v = map_to_660(ch[2]);
-    s_data.rocker_l_h = map_to_660(ch[3]);
-    s_data.knob_l = map_to_660(ch[4]);
-    s_data.knob_r = map_to_660(ch[5]);
+    /* 按本机实测分配物理控件；数组索引从 0 开始，对应 CH1～CH10。 */
+    s_data.rocker_r_h = map_to_660(ch[0]); /* CH1：右摇杆水平。 */
+    s_data.rocker_l_v = map_to_660(ch[1]); /* CH2：左摇杆竖直。 */
+    s_data.rocker_r_v = map_to_660(ch[2]); /* CH3：右摇杆竖直。 */
+    s_data.rocker_l_h = map_to_660(ch[3]); /* CH4：左摇杆水平。 */
+    s_data.knob_l = map_to_660(ch[4]);    /* CH5：VRA。 */
+    s_data.knob_r = map_to_660(ch[5]);    /* CH6：VRB。 */
+    /* CH7～CH10：面对遥控器面板，从左至右的四个拨杆。 */
     s_data.switch_a = switch_value(ch[6]);
     s_data.switch_b = switch_value(ch[7]);
     s_data.switch_c = switch_value(ch[8]);

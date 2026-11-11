@@ -1,5 +1,5 @@
 /** @file usb_app.h
- * @brief USB 应用入口：服务收发队列，预留业务协议处理，不自动发送测试数据。
+ * @brief USB 应用入口：服务收发队列，预留业务协议处理。
  */
 #ifndef USB_APP_H
 #define USB_APP_H

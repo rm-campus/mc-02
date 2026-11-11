@@ -19,13 +19,20 @@
 
 typedef struct
 {
-    /* l/r 分别为左/右摇杆，h/v 为水平/垂直；整数值域 -660～660。
-     * 协议 CH1/CH2 对应右摇杆，CH3/CH4 对应左摇杆，仍需核对遥控器设置。 */
-    int16_t rocker_l_h, rocker_l_v, rocker_r_h, rocker_r_v;
-    /* CH5/CH6 旋钮，映射方式与摇杆一致。 */
-    int16_t knob_l, knob_r;
-    /* CH7～CH10 对应四个辅助开关；HIGH/MIDDLE/LOW 分别为 1/0/-1。 */
-    int8_t switch_a, switch_b, switch_c, switch_d;
+    /* 本机 2026-11-11 实测映射；左右以正常手持、正对遥控器面板为准。
+     * l/r 分别为左/右摇杆，h/v 为水平/竖直；整数值域 -660～660。 */
+    int16_t rocker_l_h; /* CH4：左摇杆水平方向。 */
+    int16_t rocker_l_v; /* CH2：左摇杆竖直方向。 */
+    int16_t rocker_r_h; /* CH1：右摇杆水平方向。 */
+    int16_t rocker_r_v; /* CH3：右摇杆竖直方向。 */
+    /* 旋钮与摇杆使用相同的整数映射，值域 -660～660。 */
+    int16_t knob_l;     /* CH5：VRA。 */
+    int16_t knob_r;     /* CH6：VRB。 */
+    /* 四个拨杆按面板从左至右排列；HIGH/MIDDLE/LOW 分别为 1/0/-1。 */
+    int8_t switch_a;    /* CH7：从左至右第 1 个拨杆。 */
+    int8_t switch_b;    /* CH8：从左至右第 2 个拨杆。 */
+    int8_t switch_c;    /* CH9：从左至右第 3 个拨杆。 */
+    int8_t switch_d;    /* CH10：从左至右第 4 个拨杆。 */
     /* frame_lost/failsafe：最近结构正确帧的接收机标志。
      * valid：最近帧无丢帧/失控且模拟通道在有效范围；它不包含超时判断。
      * received：至少解析过一次帧头帧尾正确的候选帧，并不保证该帧可用于控制。 */
@@ -42,6 +49,8 @@ bool Fxi6x_Init(void);
 /* 处理接收缓存与错误恢复；返回 true 仅表示本轮曾解析到正常帧。
  * 同一轮之后仍可能收到失控帧，因此最终控制决策应读取快照和时间戳。 */
 bool Fxi6x_Update(void);
-/* 任务上下文使用；out 由调用方分配，内部短临界区保护结构体复制。 */
+/* 任务上下文使用；out 由调用方分配，内部短临界区保护结构体复制。
+ * 获取快照后直接使用上述物理控件字段，例如 rc.rocker_l_v 即 CH2 左摇杆竖直值。
+ * 使用控制值前还须结合 received、valid 与 last_valid_ms 判断是否在线。 */
 void Fxi6x_CopyData(Fxi6x_Data *out);
 #endif
