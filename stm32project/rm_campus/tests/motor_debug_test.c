@@ -105,26 +105,25 @@ static void safety(void)
     assert(d.state==MOTOR_DEBUG_DISABLED && d.command_raw==0);
 }
 
-static void ramp_and_pi(void)
+static void step_target_and_pi(void)
 {
     reset(); arm();
     in.stick=660;
-    for (unsigned n=0;n<1000;++n) {
-        const float before=d.reference;
-        step(n%2 ? 3U : 1U);
-        assert(fabsf(d.reference-before) <= c.accel*in.period_ms*0.001f+4e-6f);
-    }
+    step(1);
     assert(fabsf(d.reference-c.max_speed)<1e-5f);
     assert(d.command_raw <= (int16_t)(c.current_limit*16384.0f/20.0f));
     const float windup=d.integral_a;
     for(unsigned n=0;n<1000;++n) step(1);
     assert(d.integral_a==windup); /* 固定堵转输入使输出饱和，积分不再增加。 */
     in.stick=-660;
-    for(unsigned n=0;n<3001;++n) step(1);
+    step(1);
     assert(fabsf(d.reference+c.max_speed)<0.01f && d.command_raw<0);
 
+    in.stick=0; step(1);
+    assert(d.reference == 0.0f);
+
     /* 简化惯性+粘性阻力模型仅验证闭环符号/单位/恢复，不代表实物参数。 */
-    reset(); c.max_speed=3.0f; c.accel=2.0f; c.kp=0.8f; c.ki=0.8f; arm(); in.stick=660;
+    reset(); c.max_speed=3.0f; c.kp=0.8f; c.ki=0.8f; arm(); in.stick=660;
     for(unsigned n=0;n<5000;++n) {
         step(1);
         in.speed += (d.output_a*10.0f - in.speed)*0.001f;
@@ -163,9 +162,9 @@ static void continuous_running(void)
 int main(void)
 {
     MotorDebugConfig defaults=MotorDebug_DefaultConfig();
-    assert(defaults.enabled && defaults.kp==0.05f && defaults.ki==0);
+    assert(defaults.enabled && defaults.kp == MOTOR_DEBUG_KP && defaults.ki == MOTOR_DEBUG_KI);
     assert(fabsf(defaults.max_speed * 60.0f / 6.283185307179586f - 450.0f) < 0.001f);
-    safety(); ramp_and_pi(); continuous_running();
+    safety(); step_target_and_pi(); continuous_running();
     reset(); arm();
     for (int stick = -660; stick <= 660; ++stick) {
         in.stick=(int16_t)stick; step(1);
@@ -179,6 +178,6 @@ int main(void)
     for (unsigned n=0;n<299;++n) step(1);
     assert(d.state != MOTOR_DEBUG_RUNNING);
     step(1); assert(d.state == MOTOR_DEBUG_RUNNING);
-    printf("PASS: CAN_FAULT protection=%d; arming, linear mapping, faults, ramp, PI, 60s continuous operation and tick wrap.\n", MOTOR_DEBUG_CAN_FAULT_ENABLE);
+    printf("PASS: CAN_FAULT protection=%d; arming, linear mapping, faults, direct speed reference, PI, 60s continuous operation and tick wrap.\n", MOTOR_DEBUG_CAN_FAULT_ENABLE);
     return 0;
 }

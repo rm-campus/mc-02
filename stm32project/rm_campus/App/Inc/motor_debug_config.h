@@ -14,10 +14,10 @@
 #endif
 /* 四轮模式每台独立参数（A/(rad/s)、A/rad），公共限制仍使用下方同一组宏。 */
 #ifndef MOTOR_DEBUG_M1_KP
-#define MOTOR_DEBUG_M1_KP 0.05f
+#define MOTOR_DEBUG_M1_KP 3.0f
 #endif
 #ifndef MOTOR_DEBUG_M1_KI
-#define MOTOR_DEBUG_M1_KI 0.0f
+#define MOTOR_DEBUG_M1_KI 0.1f
 #endif
 #ifndef MOTOR_DEBUG_M2_KP
 #define MOTOR_DEBUG_M2_KP 0.05f
@@ -44,17 +44,37 @@
 #ifndef MOTOR_DEBUG_MOTOR_ID
 #define MOTOR_DEBUG_MOTOR_ID 1U
 #endif
+/* 单电机也使用所选 ID 的参数，避免修改 M1_KP 后单电机仍用旧值。 */
 #ifndef MOTOR_DEBUG_KP
-#define MOTOR_DEBUG_KP 0.05f /* A/(rad/s)，起试值，尚未实机整定。 */
+#if MOTOR_DEBUG_MOTOR_ID == 1U
+#define MOTOR_DEBUG_KP MOTOR_DEBUG_M1_KP
+#elif MOTOR_DEBUG_MOTOR_ID == 2U
+#define MOTOR_DEBUG_KP MOTOR_DEBUG_M2_KP
+#elif MOTOR_DEBUG_MOTOR_ID == 3U
+#define MOTOR_DEBUG_KP MOTOR_DEBUG_M3_KP
+#elif MOTOR_DEBUG_MOTOR_ID == 4U
+#define MOTOR_DEBUG_KP MOTOR_DEBUG_M4_KP
+#else
+#error "Invalid MOTOR_DEBUG_MOTOR_ID"
+#endif
 #endif
 #ifndef MOTOR_DEBUG_KI
-#define MOTOR_DEBUG_KI 0.0f /* A/rad，积分内部已乘秒单位 dt。 */
+#if MOTOR_DEBUG_MOTOR_ID == 1U
+#define MOTOR_DEBUG_KI MOTOR_DEBUG_M1_KI
+#elif MOTOR_DEBUG_MOTOR_ID == 2U
+#define MOTOR_DEBUG_KI MOTOR_DEBUG_M2_KI
+#elif MOTOR_DEBUG_MOTOR_ID == 3U
+#define MOTOR_DEBUG_KI MOTOR_DEBUG_M3_KI
+#elif MOTOR_DEBUG_MOTOR_ID == 4U
+#define MOTOR_DEBUG_KI MOTOR_DEBUG_M4_KI
+#else
+#error "Invalid MOTOR_DEBUG_MOTOR_ID"
+#endif
 #endif
 #define MOTOR_DEBUG_RPM_TO_RAD_S(rpm) ((rpm) * (6.283185307179586f / 60.0f))
 #define MOTOR_DEBUG_MAX_SPEED MOTOR_DEBUG_RPM_TO_RAD_S(450.0f)
-#define MOTOR_DEBUG_ACCEL MOTOR_DEBUG_RPM_TO_RAD_S(300.0f)
 #define MOTOR_DEBUG_CURRENT_LIMIT 15.0f
-#define MOTOR_DEBUG_INTEGRAL_LIMIT 0.3f
+#define MOTOR_DEBUG_INTEGRAL_LIMIT 0.50f
 #ifndef MOTOR_DEBUG_TELEMETRY
 #define MOTOR_DEBUG_TELEMETRY 1
 #endif

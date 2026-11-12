@@ -151,7 +151,7 @@ build/Debug/             当前有效构建输出
 
 - `App/Src/campus_app.c`：电机快照、CAN 回调、遥控/底盘/监测任务。
 - `Bsp/Src/can.c`：Bus-Off ISR 请求、任务内 Stop/Start、旧队列清空检查及恢复发送门；首次立即尝试，重复尝试至少间隔 100 ms。
-- `App/Src/motor_debug.c`：PI、斜坡、逐轮启停；`motor_debug_usb.c`：单电机四通道/四轮五通道 CSV。
+- `App/Src/motor_debug.c`：速度 PI、逐轮启停；`motor_debug_usb.c`：单电机四通道/四轮五通道 CSV。
 - `App/Src/motor_status_usb.c`：只读诊断回复及输出协调；CAN 错误由 ChassisTask 统一采集并锁存，查询不清零。
 - `Bsp/Src/fxi6x.c`：每帧解析后调用弱钩子 `Fxi6x_OnFrame()`；日志模块启用时提供强实现。
 - `App/Src/usb_app.c` → `flash_tasks.c`：唯一 USB 接收消费者、换行组帧、命令分发。

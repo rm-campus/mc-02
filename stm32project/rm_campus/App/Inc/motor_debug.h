@@ -25,7 +25,7 @@ typedef enum {
 typedef struct {
     bool enabled;
     uint8_t motor_id;
-    float kp, ki, max_speed, accel, current_limit, integral_limit;
+    float kp, ki, max_speed, current_limit, integral_limit;
     float overspeed;
     int16_t deadband;
     uint8_t max_temperature;
@@ -55,7 +55,7 @@ MotorDebugConfig MotorDebug_DefaultConfig(void);
 /* 四轮模式 ID1~4 的配置；公共参数与单电机一致，仅独立覆盖 ID/Kp/Ki。 */
 MotorDebugConfig MotorDebug_WheelConfig(uint8_t motor_id);
 void MotorDebug_Init(MotorDebug *debug);
-/* 每周期调用一次；任何不满足的安全条件都会清 PI/斜坡并输出零。
+/* 每周期调用一次；任何不满足的安全条件都会清 PI 状态并输出零。
  * 故障后必须重新观察关闭档，正常状态还需启用档摇杆回中保持 arm_hold_ms。 */
 void MotorDebug_Step(MotorDebug *debug, const MotorDebugConfig *config,
                      const MotorDebugInput *input);

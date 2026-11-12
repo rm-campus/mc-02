@@ -26,7 +26,7 @@ typedef struct {
     uint32_t run_id; /* 从全部停止到至少一台 RUNNING 递增，区分串口回传会话。 */
     CampusMotorWheelSnapshot wheel[4]; /* 按 ID1~4，单电机模式未选中的轮状态为 DISABLED。 */
     uint8_t active_mask, running_mask;
-    float common_target; /* 未经斜坡的公共原目标，rad/s。 */
+    float common_target; /* 公共目标轮速，rad/s。 */
 } CampusMotorDebugSnapshot;
 
 typedef struct

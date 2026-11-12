@@ -14,7 +14,7 @@ MotorDebugConfig MotorDebug_DefaultConfig(void)
     const MotorDebugConfig config = {
         .enabled = MOTOR_DEBUG_ENABLE != 0, .motor_id = MOTOR_DEBUG_MOTOR_ID,
         .kp = MOTOR_DEBUG_KP, .ki = MOTOR_DEBUG_KI,
-        .max_speed = MOTOR_DEBUG_MAX_SPEED, .accel = MOTOR_DEBUG_ACCEL,
+        .max_speed = MOTOR_DEBUG_MAX_SPEED,
         .current_limit = MOTOR_DEBUG_CURRENT_LIMIT, .integral_limit = MOTOR_DEBUG_INTEGRAL_LIMIT,
         .overspeed = MOTOR_DEBUG_OVERSPEED, .deadband = MOTOR_DEBUG_STICK_DEADBAND,
         .max_temperature = MOTOR_DEBUG_MAX_TEMPERATURE,
@@ -66,7 +66,6 @@ static bool config_valid(const MotorDebugConfig *c)
         isfinite(c->kp) && c->kp >= 0.0f && c->kp <= 100.0f &&
         isfinite(c->ki) && c->ki >= 0.0f && c->ki <= 100.0f &&
         isfinite(c->max_speed) && c->max_speed > 0.0f && c->max_speed <= MOTOR_DEBUG_RPM_TO_RAD_S(450.0f) &&
-        isfinite(c->accel) && c->accel > 0.0f && c->accel <= MOTOR_DEBUG_RPM_TO_RAD_S(600.0f) &&
         isfinite(c->current_limit) && c->current_limit > 0.0f && c->current_limit <= 20.0f &&
         isfinite(c->integral_limit) && c->integral_limit >= 0.0f &&
         c->integral_limit <= c->current_limit &&
@@ -140,7 +139,7 @@ void MotorDebug_Step(MotorDebug *d, const MotorDebugConfig *c, const MotorDebugI
     /* 运行时保持严格线性；deadband 仅用于启用前的回中判定。 */
     d->target = (float)in->stick * (c->max_speed / 660.0f);
     const float dt = (float)in->period_ms * 0.001f;
-    d->reference += clampf(d->target - d->reference, -c->accel * dt, c->accel * dt);
+    d->reference = d->target;
     const float error = d->reference - in->speed;
     const float proportional = c->kp * error;
     const float candidate = clampf(d->integral_a + c->ki * error * dt,
