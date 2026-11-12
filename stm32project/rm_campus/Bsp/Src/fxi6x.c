@@ -40,6 +40,11 @@ static osThreadId_t s_task;
 /* 首次启动清空统计；后续错误恢复保留历史计数。 */
 static bool s_initialized;
 
+__attribute__((weak)) void Fxi6x_OnFrame(const Fxi6x_Data *data)
+{
+    (void)data;
+}
+
 /**
  * @brief 通知 RcTask 缓冲区或异常状态有变化。
  * 在接收回调中调用；使用允许从 ISR 调用的线程标志置位接口。
@@ -220,6 +225,7 @@ static bool decode(void)
     if (!valid)
     {
         clear_controls();
+        Fxi6x_OnFrame(&s_data);
         return false;
     }
     /* 按本机实测分配物理控件；数组索引从 0 开始，对应 CH1～CH10。 */
@@ -237,6 +243,7 @@ static bool decode(void)
     /* 只有真正正常的帧才刷新在线时间，串口噪声和失控帧不能续命。 */
     s_data.last_valid_ms = HAL_GetTick();
     s_data.valid = true;
+    Fxi6x_OnFrame(&s_data);
     return true;
 }
 

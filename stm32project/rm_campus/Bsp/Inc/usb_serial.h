@@ -52,6 +52,12 @@ typedef struct
     uint32_t io_error_count;
 } UsbSerialStatus;
 
+/* 会话内的发送完成凭据；完成代表 USB 传输完成，不代表电脑软件保存成功。 */
+typedef struct { uint32_t session_id, end_bytes; } UsbSerialTxTicket;
+typedef enum { USB_TX_PENDING, USB_TX_COMPLETE, USB_TX_DISCONNECTED } UsbSerialTxState;
+UsbSerialResult UsbSerial_SendTracked(const void *data, uint16_t length, UsbSerialTxTicket *ticket);
+UsbSerialTxState UsbSerial_GetTxState(const UsbSerialTxTicket *ticket);
+
 bool UsbSerial_IsReady(void);
 
 /* 非阻塞、整段入队。data 在返回后即可修改/释放；length==0 或 NULL 为参数错误。

@@ -1,0 +1,73 @@
+/** 单电机/四轮台架配置：输出轴 rpm 对外，PI 内部 rad/s、A、s。 */
+#ifndef MOTOR_DEBUG_CONFIG_H
+#define MOTOR_DEBUG_CONFIG_H
+#ifndef MOTOR_DEBUG_ENABLE
+#define MOTOR_DEBUG_ENABLE 1
+#endif
+#define MOTOR_DEBUG_MODE_SINGLE 0
+#define MOTOR_DEBUG_MODE_FOUR 1
+#ifndef MOTOR_DEBUG_MODE
+#define MOTOR_DEBUG_MODE MOTOR_DEBUG_MODE_FOUR
+#endif
+#if MOTOR_DEBUG_MODE != MOTOR_DEBUG_MODE_SINGLE && MOTOR_DEBUG_MODE != MOTOR_DEBUG_MODE_FOUR
+#error "Invalid MOTOR_DEBUG_MODE"
+#endif
+/* 四轮模式每台独立参数（A/(rad/s)、A/rad），公共限制仍使用下方同一组宏。 */
+#ifndef MOTOR_DEBUG_M1_KP
+#define MOTOR_DEBUG_M1_KP 0.05f
+#endif
+#ifndef MOTOR_DEBUG_M1_KI
+#define MOTOR_DEBUG_M1_KI 0.0f
+#endif
+#ifndef MOTOR_DEBUG_M2_KP
+#define MOTOR_DEBUG_M2_KP 0.05f
+#endif
+#ifndef MOTOR_DEBUG_M2_KI
+#define MOTOR_DEBUG_M2_KI 0.0f
+#endif
+#ifndef MOTOR_DEBUG_M3_KP
+#define MOTOR_DEBUG_M3_KP 0.05f
+#endif
+#ifndef MOTOR_DEBUG_M3_KI
+#define MOTOR_DEBUG_M3_KI 0.0f
+#endif
+#ifndef MOTOR_DEBUG_M4_KP
+#define MOTOR_DEBUG_M4_KP 0.05f
+#endif
+#ifndef MOTOR_DEBUG_M4_KI
+#define MOTOR_DEBUG_M4_KI 0.0f
+#endif
+/* 临时禁用软件 CAN_FAULT 停机；置 1 并重新编译恢复。硬件 Bus-Off 不受此开关影响。 */
+#ifndef MOTOR_DEBUG_CAN_FAULT_ENABLE
+#define MOTOR_DEBUG_CAN_FAULT_ENABLE 0
+#endif
+#ifndef MOTOR_DEBUG_MOTOR_ID
+#define MOTOR_DEBUG_MOTOR_ID 1U
+#endif
+#ifndef MOTOR_DEBUG_KP
+#define MOTOR_DEBUG_KP 0.05f /* A/(rad/s)，起试值，尚未实机整定。 */
+#endif
+#ifndef MOTOR_DEBUG_KI
+#define MOTOR_DEBUG_KI 0.0f /* A/rad，积分内部已乘秒单位 dt。 */
+#endif
+#define MOTOR_DEBUG_RPM_TO_RAD_S(rpm) ((rpm) * (6.283185307179586f / 60.0f))
+#define MOTOR_DEBUG_MAX_SPEED MOTOR_DEBUG_RPM_TO_RAD_S(450.0f)
+#define MOTOR_DEBUG_ACCEL MOTOR_DEBUG_RPM_TO_RAD_S(300.0f)
+#define MOTOR_DEBUG_CURRENT_LIMIT 15.0f
+#define MOTOR_DEBUG_INTEGRAL_LIMIT 0.3f
+#ifndef MOTOR_DEBUG_TELEMETRY
+#define MOTOR_DEBUG_TELEMETRY 1
+#endif
+#define MOTOR_DEBUG_TELEMETRY_PERIOD_MS 20U
+/* CH7 最左拨杆：+1 关闭确认，-1 启用。CH2 左摇杆竖直。 */
+#define MOTOR_DEBUG_STICK_DEADBAND 40 /* 仅启用前回中判定；运行时无死区重映射。 */
+#define MOTOR_DEBUG_ARM_HOLD_MS 300U
+#define MOTOR_DEBUG_RC_TIMEOUT_MS 100U
+#define MOTOR_DEBUG_FEEDBACK_TIMEOUT_MS 100U
+#define MOTOR_DEBUG_MAX_PERIOD_MS 5U
+#define MOTOR_DEBUG_MAX_TEMPERATURE 110U
+#define MOTOR_DEBUG_OVERSPEED MOTOR_DEBUG_RPM_TO_RAD_S(540.0f)
+#if (MOTOR_DEBUG_ENABLE != 0 && MOTOR_DEBUG_ENABLE != 1) || (MOTOR_DEBUG_TELEMETRY != 0 && MOTOR_DEBUG_TELEMETRY != 1) || (MOTOR_DEBUG_CAN_FAULT_ENABLE != 0 && MOTOR_DEBUG_CAN_FAULT_ENABLE != 1)
+#error "Motor debug switches must be 0 or 1"
+#endif
+#endif

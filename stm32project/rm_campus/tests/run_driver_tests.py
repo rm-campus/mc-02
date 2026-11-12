@@ -176,6 +176,7 @@ int main(void)
     uint8_t feedback[8] = {0x1F,0xF0,0,60,0x20,0,35,0};
     Motor3508_Update(&motor, 0x201, feedback, 8);
     assert(motor.received_mask == 1 && motor.temperature[0] == 35 && motor.current[0] == -10.0f);
+    assert(motor.rotor_rpm[0] == 60); /* 原始转子 rpm 不随输出方向掩码翻转。 */
     assert(motor.velocity[0] < 0);
     feedback[0] = 0; feedback[1] = 16;
     Motor3508_Update(&motor, 0x201, feedback, 8); assert(motor.round[0] == 1);

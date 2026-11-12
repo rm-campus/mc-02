@@ -42,6 +42,7 @@ void Motor3508_Init(Motor3508 *motor, uint8_t reversed)
         motor->command[slot] = 0;
         motor->position[slot] = 0.0f;
         motor->velocity[slot] = 0.0f;
+        motor->rotor_rpm[slot] = 0;
         motor->current[slot] = 0.0f;
         motor->temperature[slot] = 0U;
         motor->last_feedback_ms[slot] = 0U;
@@ -83,7 +84,7 @@ void Motor3508_SetCurrent(Motor3508 *motor, uint8_t slot, int16_t current)
     motor->command[slot] = current;
 }
 
-void Motor3508_Update(Motor3508 *motor,
+bool Motor3508_Update(Motor3508 *motor,
                       uint32_t id,
                       const uint8_t *data,
                       uint8_t size)
@@ -98,13 +99,13 @@ void Motor3508_Update(Motor3508 *motor,
     /* 反馈帧固定为 8 字节。 */
     if ((motor == NULL) || (data == NULL) || (size != 8U))
     {
-        return;
+        return false;
     }
 
     /* 本对象处理 0x201～0x204。 */
     if ((id < MOTOR3508_RX_ID) || (id >= (MOTOR3508_RX_ID + 4U)))
     {
-        return;
+        return false;
     }
 
     /* 反馈 ID 与槽位的对应关系：0x201 -> 0，0x204 -> 3。 */
@@ -115,7 +116,7 @@ void Motor3508_Update(Motor3508 *motor,
     /* 非法编码器值不更新在线时间，避免异常反馈让监测误判为正常在线。 */
     if (encoder >= MOTOR3508_ENCODER_MAX)
     {
-        return;
+        return false;
     }
     speed_rpm = (int16_t)(((uint16_t)data[2] << 8U) | data[3]);
     current_raw = (int16_t)(((uint16_t)data[4] << 8U) | data[5]);
@@ -152,6 +153,7 @@ void Motor3508_Update(Motor3508 *motor,
     }
 
     motor->encoder[slot] = encoder;
+    motor->rotor_rpm[slot] = speed_rpm;
     motor->temperature[slot] = data[6];
     /* 只有 ID、长度和编码器值合法的反馈才刷新时间戳和接收掩码。 */
     motor->last_feedback_ms[slot] = HAL_GetTick();
@@ -184,6 +186,7 @@ void Motor3508_Update(Motor3508 *motor,
      */
     motor->current[slot] =
         direction * (float)current_raw * MOTOR3508_CURRENT_TO_AMP;
+    return true;
 }
 
 bool Motor3508_Send(Motor3508 *motor)

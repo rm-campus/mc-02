@@ -3,7 +3,7 @@
  * @brief 应用层任务与驱动的接线位置。
  * CAN 回调只做读帧和反馈解析；遥控协议在 RcTask 中解析；LED 仅由 StatusTask 更新。
  * 所有 ms 时间戳来自 HAL_GetTick；任务等待使用 FreeRTOS tick，工程 tick 为 1 kHz。
- * 此版本的 ChassisTask 始终发送四路零电流，绿色 LED 也不表示已启用运动。
+ * 单电机调试启用后仍需遥控关闭档确认及回中。绿色不表示运动使能。
  */
 #include "campus_app.h"
 #include "can.h"
@@ -11,26 +11,93 @@
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "motor_debug_config.h"
 #include <stddef.h>
+#include <string.h>
 
 /* 遥控超过此时间没有正常帧即离线；与任务心跳分别统计。 */
 #define RC_TIMEOUT_MS 100U
 /* 电机是否在线取决于反馈是否新鲜，不取决于是否曾经收到过反馈。 */
-#define MOTOR_TIMEOUT_MS 50U
+#define MOTOR_TIMEOUT_MS MOTOR_DEBUG_FEEDBACK_TIMEOUT_MS
 /* command 由底盘任务写入；编码器、速度、电流和时间戳由 CAN 接收中断更新。 */
 static Motor3508 s_motors;
 static CampusStatus s_status;
+static CampusMotorDebugSnapshot s_motor_debug;
+static CampusCanDiagnostics s_can_diagnostics;
+
+void Campus_CopyMotorStatus(CampusMotorStatusSnapshot *out)
+{
+    if (out == NULL) return;
+    taskENTER_CRITICAL();
+    out->now_ms = HAL_GetTick();
+    out->motors = s_motors;
+    out->status = s_status;
+    out->debug = s_motor_debug;
+    out->can = s_can_diagnostics;
+    Can_CopyRecovery(&out->recovery);
+    Fxi6x_CopyData(&out->rc);
+    taskEXIT_CRITICAL();
+}
+
+/* PSR 读操作会影响部分事件字段，集中到控制任务，监测/USB 只读缓存。 */
+static bool sample_can_status(void)
+{
+    FDCAN_ProtocolStatusTypeDef protocol = {0};
+    FDCAN_ErrorCountersTypeDef errors = {0};
+    bool valid = s_status.can_ready &&
+        HAL_FDCAN_GetProtocolStatus(&hfdcan1, &protocol) == HAL_OK;
+    bool counters_valid = s_status.can_ready &&
+        HAL_FDCAN_GetErrorCounters(&hfdcan1, &errors) == HAL_OK;
+    CanRecoveryStatus recovery;
+    Can_CopyRecovery(&recovery);
+    uint32_t now = HAL_GetTick();
+    taskENTER_CRITICAL();
+    s_can_diagnostics.status_valid = valid;
+    s_can_diagnostics.counters_valid = counters_valid;
+    s_can_diagnostics.sample_ms = now;
+    s_can_diagnostics.bus_off = protocol.BusOff != 0U;
+    s_can_diagnostics.passive = protocol.ErrorPassive != 0U;
+    s_can_diagnostics.warning = protocol.Warning != 0U;
+    s_can_diagnostics.tec = errors.TxErrorCnt;
+    s_can_diagnostics.rec = errors.RxErrorCnt;
+    /* FDCAN 在 Bus-Off 恢复期间也用 BIT0 表示观察到恢复用隐性位序列，
+     * 这不是新的物理发送故障，不覆盖触发本次恢复的历史错误。 */
+    bool recovery_progress = recovery.state == CAN_RECOVERY_WAIT_BUS && protocol.LastErrorCode == 5U;
+    if (valid && !recovery_progress && protocol.LastErrorCode >= 1U && protocol.LastErrorCode <= 6U) {
+        s_can_diagnostics.last_error = protocol.LastErrorCode;
+        s_can_diagnostics.last_error_ms = now;
+    }
+    /* 查询失败也不能让 LED 报告总线健康。 */
+    s_status.can_bus_off = !valid || protocol.BusOff != 0U;
+    taskEXIT_CRITICAL();
+    return valid && !protocol.BusOff;
+}
+
+void Campus_CopyMotorDebug(CampusMotorDebugSnapshot *out)
+{
+    if (out != NULL) {
+        taskENTER_CRITICAL();
+        *out = s_motor_debug;
+        taskEXIT_CRITICAL();
+    }
+}
 
 /**
  * @brief 初始化四台 M3508 的软件状态并启动 CAN 接收。
- * @note 调用前必须完成 MX_FDCAN3_Init；对象必须先于接收中断初始化。
+ * @note 调用前必须完成 MX_FDCAN1_Init；对象必须先于接收中断初始化。
  * 方向掩码 0U 表示暂不反向；轮序和实际正方向尚待上板标定。
  */
 void Campus_Init(void)
 {
     /* 必须先初始化对象，再开启可能触发反馈解析的 CAN 中断。 */
+    memset(&s_status, 0, sizeof(s_status));
+    memset(&s_can_diagnostics, 0, sizeof(s_can_diagnostics));
+    memset(&s_motor_debug, 0, sizeof(s_motor_debug));
+    s_motor_debug.motor_id = MOTOR_DEBUG_MOTOR_ID;
+    MotorDebug_Init(&s_motor_debug.control);
+    for (unsigned i = 0; i < 4U; ++i) MotorDebug_Init(&s_motor_debug.wheel[i].control);
     Motor3508_Init(&s_motors, 0U);
-    s_status.can_ready = Can_Init(&hfdcan3);
+    s_status.can_ready = Can_Init(&hfdcan1);
 }
 
 /**
@@ -64,18 +131,18 @@ void Campus_CopyStatus(CampusStatus *out)
 }
 
 /**
- * @brief HAL 调用的 FDCAN 接收中断回调，当前仅处理 FDCAN3。
+ * @brief HAL 调用的 FDCAN 接收中断回调，当前仅处理 FDCAN1。
  * 一次回调取空 FIFO，按帧类型和长度筛选，再交给 Motor3508_Update 按 ID 解析。
  * 这里运行在中断上下文，不能执行任务延时、等待互斥量或长时间打印。
- * @param flags HAL 传入的事件标志，当前逻辑不逐项使用。
+ * @param flags 含 RX FIFO0 丢失事件；计数是事件次数，不保证等于丢帧数。
  */
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t flags)
 {
-    (void)flags;
-    if (hfdcan != &hfdcan3)
+    if (hfdcan != &hfdcan1)
     {
         return;
     }
+    if ((flags & FDCAN_IT_RX_FIFO0_MESSAGE_LOST) != 0U) ++s_can_diagnostics.fifo_lost_events;
     while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0) > 0U)
     {
         FDCAN_RxHeaderTypeDef header;
@@ -84,15 +151,23 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t flags)
         uint8_t data[64];
         if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &header, data) != HAL_OK)
         {
+            ++s_can_diagnostics.read_fail;
             break;
         }
         if (header.IdType == FDCAN_STANDARD_ID &&
             header.RxFrameType == FDCAN_DATA_FRAME &&
             header.FDFormat == FDCAN_CLASSIC_CAN &&
-            header.DataLength == FDCAN_DLC_BYTES_8)
+            header.DataLength == FDCAN_DLC_BYTES_8 &&
+            header.Identifier >= 0x201U && header.Identifier <= 0x204U)
         {
-            Motor3508_Update(&s_motors, header.Identifier, data, 8U);
+            uint32_t slot = header.Identifier - 0x201U;
+            if (Motor3508_Update(&s_motors, header.Identifier, data, 8U)) {
+                ++s_can_diagnostics.valid_frames[slot];
+                Can_RecoveryFeedback((uint8_t)slot);
+            }
+            else ++s_can_diagnostics.bad_encoder[slot];
         }
+        else ++s_can_diagnostics.bad_format;
     }
 }
 
@@ -123,34 +198,87 @@ void Campus_RcTask(void *argument)
 }
 
 /**
- * @brief 每 1 ms 发送四路零电流，验证 CAN 发送与电机反馈链路。
- * Motor3508_SetCurrent 的参数是协议原始电流值，0 表示不给驱动电流。
- * 当前不读取摇杆来驱动电机，后续接 PID 前应补充使能条件、轮序和方向标定。
- * can_tx_failures 统计提交 FIFO 失败，未统计物理总线的全部错误。
+ * @brief 1 ms 更新单电机或四个独立 PI，统一发送一个 0x200 电流帧。
+ * 每轮独立启用/停机；仅遥控、调度或总线等公共事件会影响所有轮。
  */
 void Campus_ChassisTask(void *argument)
 {
     (void)argument;
+    const MotorDebugConfig base = MotorDebug_DefaultConfig();
+#if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
+    const uint8_t selected = 0U, active_mask = 0x0FU;
+#else
+    const uint8_t selected = base.motor_id >= 1U && base.motor_id <= 4U ? base.motor_id - 1U : 0U;
+    const uint8_t active_mask = (uint8_t)(1U << selected);
+#endif
+    MotorDebugConfig configs[4];
+    CampusMotorDebugSnapshot frame = {0};
+    frame.active_mask = active_mask;
+    frame.motor_id = base.motor_id;
+    for (uint8_t i = 0; i < 4U; ++i) {
+#if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
+        configs[i] = MotorDebug_WheelConfig(i + 1U);
+#else
+        configs[i] = base;
+#endif
+        MotorDebug_Init(&frame.wheel[i].control);
+        if ((active_mask & (1U << i)) == 0U) frame.wheel[i].control.state = MOTOR_DEBUG_DISABLED;
+    }
     TickType_t wake = xTaskGetTickCount();
-    for (;;)
-    {
-        /* 本次只接通驱动链路：四路每 1 ms 发送零电流。
-         * 后续确认轮序、方向及 PID 参数后，再接入麦轮闭环目标。 */
-        for (uint8_t slot = 0U; slot < 4U; ++slot)
-        {
-            Motor3508_SetCurrent(&s_motors, slot, 0);
+    uint32_t previous_ms = HAL_GetTick();
+    for (;;) {
+        Fxi6x_Data rc;
+        Motor3508 motors;
+        Fxi6x_CopyData(&rc);
+        Campus_CopyMotors(&motors);
+        const bool can_ok = sample_can_status();
+        const uint32_t now = HAL_GetTick();
+        const bool tx_allowed = Can_ProcessRecovery(s_can_diagnostics.status_valid,
+            s_can_diagnostics.bus_off, now, active_mask);
+        const uint8_t recovery_mask = tx_allowed ? Can_RecoveryOutputMask() : 0U;
+        const uint8_t previous_running = frame.running_mask;
+        frame.running_mask = 0U;
+        frame.common_target = (float)rc.rocker_l_v * (base.max_speed / 660.0f);
+        for (uint8_t i = 0; i < 4U; ++i) {
+            MotorDebugInput *input = &frame.wheel[i].input;
+            *input = (MotorDebugInput){
+                .now_ms = now, .period_ms = (uint32_t)(now - previous_ms),
+                .rc_valid = rc.valid, .rc_received = rc.received,
+                .motor_received = (motors.received_mask & (1U << i)) != 0U,
+                .can_ok = can_ok, .rc_ms = rc.last_valid_ms,
+                .feedback_ms = motors.last_feedback_ms[i],
+                .enable_switch = rc.switch_a, .stick = rc.rocker_l_v,
+                .speed = motors.velocity[i], .measured_current = motors.current[i],
+                .temperature = motors.temperature[i]
+            };
+            if ((active_mask & (1U << i)) != 0U)
+                MotorDebug_Step(&frame.wheel[i].control, &configs[i], input);
+            int16_t command = (active_mask & recovery_mask & (1U << i)) != 0U ?
+                frame.wheel[i].control.command_raw : 0;
+            Motor3508_SetCurrent(&s_motors, i, command);
         }
-        if (s_status.can_ready && !Motor3508_Send(&s_motors))
-        {
+        previous_ms = now;
+        if (s_status.can_ready && tx_allowed && !Motor3508_Send(&s_motors)) {
+            for (uint8_t i = 0; i < 4U; ++i) {
+                if ((active_mask & (1U << i)) != 0U) MotorDebug_TxFailed(&frame.wheel[i].control);
+#if MOTOR_DEBUG_CAN_FAULT_ENABLE
+                Motor3508_SetCurrent(&s_motors, i, 0);
+#endif
+            }
             taskENTER_CRITICAL();
             ++s_status.can_tx_failures;
             taskEXIT_CRITICAL();
         }
+        for (uint8_t i = 0; i < 4U; ++i)
+            if (frame.wheel[i].control.state == MOTOR_DEBUG_RUNNING) frame.running_mask |= (uint8_t)(1U << i);
+        if (previous_running == 0U && frame.running_mask != 0U) ++frame.run_id;
+        /* 保留单电机快照接口；四轮诊断/回传使用 wheel[] 和 running_mask。 */
+        frame.control = frame.wheel[selected].control;
+        frame.input = frame.wheel[selected].input;
         taskENTER_CRITICAL();
-        s_status.chassis_heartbeat_ms = HAL_GetTick();
+        s_status.chassis_heartbeat_ms = now;
+        s_motor_debug = frame;
         taskEXIT_CRITICAL();
-        /* 按绝对唤醒时刻安排 1 ms 周期，避免把本轮计算时间叠加进周期。
-         * 这不是硬件定时保证；后续 PID 接入后仍需测量执行时间和调度抖动。 */
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(1U));
     }
 }
@@ -181,17 +309,12 @@ void Campus_MonitorTask(void *argument)
                 online |= (uint8_t)(1U << slot);
             }
         }
-        FDCAN_ProtocolStatusTypeDef protocol = {0};
-        /* 初始化成功后才查询控制器；Bus-Off 只更新状态，不在此处重启外设。 */
-        bool bus_off = s_status.can_ready &&
-            HAL_FDCAN_GetProtocolStatus(&hfdcan3, &protocol) == HAL_OK && protocol.BusOff;
         taskENTER_CRITICAL();
         /* uint32_t 时间差允许 HAL 毫秒计数器回绕；只在差值远小于回绕周期时使用。
          * 丢帧/失控导致 valid=false，完全断线则通过最后有效帧时间检测。 */
         s_status.rc_online = rc.received && rc.valid &&
             (uint32_t)(now - rc.last_valid_ms) < RC_TIMEOUT_MS;
         s_status.motor_online_mask = online;
-        s_status.can_bus_off = bus_off;
         s_status.monitor_heartbeat_ms = now;
         taskEXIT_CRITICAL();
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(10U));
@@ -201,7 +324,7 @@ void Campus_MonitorTask(void *argument)
 /**
  * @brief 单独管理板载 RGB LED，避免多个任务同时使用静态发送缓冲区。
  * 状态优先级：CAN 故障（紫）> 遥控无效（红）> 电机不齐（黄）> 全在线（绿）。
- * @note 绿色仅表示通信在线；当前仍输出零电流。LED 发送失败返回值目前未上报。
+ * @note 绿色仅表示通信在线，不表示调试器已启用。LED 发送失败目前未上报。
  */
 void Campus_StatusTask(void *argument)
 {
@@ -225,7 +348,7 @@ void Campus_StatusTask(void *argument)
         }
         else
         {
-            (void)Led_SetRGB(0U, 20U, 0U);   /* 绿：遥控及四电机在线，仍为零电流。 */
+            (void)Led_SetRGB(0U, 20U, 0U);   /* 绿：遥控及四电机在线。 */
         }
         /* 状态指示不参与快速控制；每 50 tick 更新一次，给高优先级任务让出 CPU。 */
         osDelay(50U);

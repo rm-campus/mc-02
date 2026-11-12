@@ -53,6 +53,9 @@ typedef struct
      */
     float velocity[4];
 
+    /* C620 原始转子 rpm，未除减速比、未应用 reversed；日志以此保存。 */
+    int16_t rotor_rpm[4];
+
     /**
      * 反馈电流，单位 A。
      * 由反馈帧中的原始电流值换算得到。

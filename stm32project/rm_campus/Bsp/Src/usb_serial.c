@@ -25,6 +25,7 @@ static uint16_t s_tx_head, s_tx_tail, s_tx_count, s_tx_in_flight;
 static uint16_t s_packet_size;
 static bool s_configured, s_rx_armed;
 static UsbSerialStatus s_status;
+static uint32_t s_session_queued, s_session_completed;
 
 /* 最长临界区是一次容量受限的 memcpy；不等待端点、不延时、不格式化字符串。
  * 保存 PRIMASK，支持 USB IRQ、任务及应用短临界区内调用，不意外开启中断。 */
@@ -47,6 +48,7 @@ static void clear_queues(void)
     s_status.tx_discarded_bytes += s_tx_count;
     s_rx_head = s_rx_tail = s_rx_count = 0U;
     s_tx_head = s_tx_tail = s_tx_count = s_tx_in_flight = 0U;
+    s_session_queued = s_session_completed = 0U;
     ++s_status.session_id;
 }
 
@@ -122,6 +124,7 @@ void UsbSerial_OnTransmitComplete(const uint8_t *data, uint32_t length)
         s_tx_tail = (uint16_t)((s_tx_tail + length) % USB_SERIAL_TX_CAPACITY);
         s_tx_count -= s_tx_in_flight;
         s_status.tx_completed_bytes += s_tx_in_flight;
+        s_session_completed += s_tx_in_flight;
         s_tx_in_flight = 0U;
     }
     __set_PRIMASK(mask);
@@ -136,6 +139,11 @@ bool UsbSerial_IsReady(void)
 }
 
 UsbSerialResult UsbSerial_Send(const void *data, uint16_t length)
+{
+    return UsbSerial_SendTracked(data, length, NULL);
+}
+
+UsbSerialResult UsbSerial_SendTracked(const void *data, uint16_t length, UsbSerialTxTicket *ticket)
 {
     if (data == NULL || length == 0U) return USB_SERIAL_INVALID_ARGUMENT;
     if (length > USB_SERIAL_TX_CAPACITY) return USB_SERIAL_TOO_LARGE;
@@ -159,7 +167,23 @@ UsbSerialResult UsbSerial_Send(const void *data, uint16_t length)
         s_tx_head = (uint16_t)((s_tx_head + length) % USB_SERIAL_TX_CAPACITY);
         s_tx_count += length;
         s_status.tx_queued_bytes += length;
+        s_session_queued += length;
+        if (ticket != NULL)
+        {
+            ticket->session_id = s_status.session_id;
+            ticket->end_bytes = s_session_queued;
+        }
     }
+    __set_PRIMASK(mask);
+    return result;
+}
+
+UsbSerialTxState UsbSerial_GetTxState(const UsbSerialTxTicket *ticket)
+{
+    uint32_t mask = lock();
+    UsbSerialTxState result = USB_TX_DISCONNECTED;
+    if (ticket != NULL && ready() && ticket->session_id == s_status.session_id)
+        result = (int32_t)(s_session_completed - ticket->end_bytes) >= 0 ? USB_TX_COMPLETE : USB_TX_PENDING;
     __set_PRIMASK(mask);
     return result;
 }

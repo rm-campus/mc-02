@@ -57,6 +57,18 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define W25Q64_IO3_Pin GPIO_PIN_1
+#define W25Q64_IO3_GPIO_Port GPIOA
+#define W25Q64_IO2_Pin GPIO_PIN_3
+#define W25Q64_IO2_GPIO_Port GPIOA
+#define W25Q64_IO1_Pin GPIO_PIN_0
+#define W25Q64_IO1_GPIO_Port GPIOB
+#define W25Q64_CLK_Pin GPIO_PIN_2
+#define W25Q64_CLK_GPIO_Port GPIOB
+#define W25Q64_CS_Pin GPIO_PIN_11
+#define W25Q64_CS_GPIO_Port GPIOE
+#define W25Q64_IO0_Pin GPIO_PIN_11
+#define W25Q64_IO0_GPIO_Port GPIOD
 #define ACC_CS_Pin GPIO_PIN_0
 #define ACC_CS_GPIO_Port GPIOC
 #define GYRO_CS_Pin GPIO_PIN_3

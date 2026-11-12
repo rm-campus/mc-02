@@ -76,9 +76,18 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/usb_serial.c
     Bsp/Src/bmi088.c
     Bsp/Src/imu_clock.c
+    Bsp/Src/w25q64.c
     App/Src/campus_app.c
+    App/Src/motor_debug.c
+    App/Src/motor_debug_usb.c
+    App/Src/motor_status_usb.c
     App/Src/usb_app.c
     App/Src/imu_app.c
+    App/Src/chassis_targets.c
+    App/Src/flash_service.c
+    App/Src/flash_tasks.c
+    App/Src/flash_test.c
+    App/Src/motor_speed_log.c
     Algorithm/Src/imu_filter.c
     Algorithm/Src/QuaternionEKFc.c
     Algorithm/Src/kalman_filter.c

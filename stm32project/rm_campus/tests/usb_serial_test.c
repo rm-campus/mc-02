@@ -12,6 +12,11 @@ static int rx_armed, zlp_pending, fail_tx_once, fail_rx_once;
 static uint8_t transmitted[32768], pattern[16384], scratch[2048];
 static size_t transmitted_length;
 
+/* 此套件验证 USB BSP；业务协议与 Flash 状态机由独立集成套件覆盖。 */
+void FlashTasks_UsbInput(const uint8_t *data, uint16_t length) { (void)data; (void)length; }
+void FlashTasks_UsbSession(uint32_t session, bool ready) { (void)session; (void)ready; }
+void MotorStatusUsb_Process(void) {}
+
 uint32_t __get_PRIMASK(void) { return irq_mask; }
 void __disable_irq(void) { irq_mask = 1U; }
 void __set_PRIMASK(uint32_t mask) { irq_mask = mask; }
@@ -230,6 +235,25 @@ static void test_application(void)
     assert(!cdc.TxState && status().tx_buffered == 0 && transmitted_length == 0);
 }
 
+static void test_tx_tickets(void)
+{
+    connect_device();
+    UsbSerialTxTicket a, b;
+    assert(UsbSerial_SendTracked(pattern, 64, &a) == USB_SERIAL_OK);
+    assert(UsbSerial_GetTxState(&a) == USB_TX_PENDING);
+    UsbSerial_Process(); data_complete();
+    assert(zlp_pending && UsbSerial_GetTxState(&a) == USB_TX_PENDING);
+    complete(); assert(UsbSerial_GetTxState(&a) == USB_TX_COMPLETE);
+    assert(UsbSerial_SendTracked(pattern, 64, &b) == USB_SERIAL_OK);
+    connect_device();
+    assert(UsbSerial_GetTxState(&b) == USB_TX_DISCONNECTED);
+    assert(UsbSerial_SendTracked(pattern, 7, &a) == USB_SERIAL_OK);
+    assert(UsbSerial_GetTxState(&a) == USB_TX_PENDING); drain();
+    assert(UsbSerial_GetTxState(&a) == USB_TX_COMPLETE); /* 旧会话丢弃字节不影响新凭据。 */
+    hUsbDeviceHS.dev_state = USBD_STATE_SUSPENDED;
+    assert(UsbSerial_GetTxState(&a) == USB_TX_DISCONNECTED);
+}
+
 int main(void)
 {
     for (size_t i = 0; i < sizeof(pattern); ++i) pattern[i] = (uint8_t)(i * 37U + i / 64U);
@@ -240,6 +264,7 @@ int main(void)
     test_tx();
     test_connection_and_printf();
     test_application();
+    test_tx_tickets();
     assert(!irq_mask && !critical_depth);
     puts("PASS: USB queues, wrap, backpressure, TX ownership/ZLP, retries, session reset, printf, application RX/TX.");
     return 0;

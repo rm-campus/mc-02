@@ -28,6 +28,7 @@
 #include "campus_app.h"
 #include "usb_app.h"
 #include "imu_app.h"
+#include "flash_tasks.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -193,7 +194,8 @@ void MX_FREERTOS_Init(void) {
   StatusTaskHandle = osThreadNew(StartStatusTask, NULL, &StatusTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  /* 按两个独立编译开关创建业务任务及共用 Flash 服务，生成代码时保留。 */
+  FlashTasks_Create();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

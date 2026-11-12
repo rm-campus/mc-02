@@ -8,6 +8,17 @@
 
 以上为项目计划，具体结构与功能根据比赛规则及实际调试情况调整。
 
+## 当前电控固件
+
+固件目录为 `stm32project/rm_campus/`。已加入宏切换的单电机/四轮独立速度 PI 调试、
+50 Hz CSV 回传、`motor_status` 诊断以及 FDCAN1 Bus-Off 自动恢复。默认四轮联调，
+单轮异常只停止对应轮，电机反馈超时为 100 ms，无运行时长限制。
+
+开发入口见[工程 README](stm32project/rm_campus/README.md)、
+[调试操作说明](stm32project/rm_campus/SINGLE_MOTOR_DEBUG.md)和
+[通信协议](stm32project/rm_campus/COMMUNICATION_PROTOCOL.md)。Flash 记录功能保留，当前关闭。
+主机回归测试与固件编译用于软件验证；四轮参数、方向和实际总线恢复时序仍需实机验证。
+
 ## 团队分工
 
 团队由两名底盘队员、三名机械臂队员和一名顾问组成，人员姓名待填写。

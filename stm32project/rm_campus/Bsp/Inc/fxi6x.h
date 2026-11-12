@@ -53,4 +53,7 @@ bool Fxi6x_Update(void);
  * 获取快照后直接使用上述物理控件字段，例如 rc.rocker_l_v 即 CH2 左摇杆竖直值。
  * 使用控制值前还须结合 received、valid 与 last_valid_ms 判断是否在线。 */
 void Fxi6x_CopyData(Fxi6x_Data *out);
+/* 每个完整候选帧解析结束后调用，运行于 RcTask；默认弱实现为空。
+ * 指针仅在调用期间有效，不允许在钩子里做 Flash/USB 阻塞操作。 */
+void Fxi6x_OnFrame(const Fxi6x_Data *data);
 #endif

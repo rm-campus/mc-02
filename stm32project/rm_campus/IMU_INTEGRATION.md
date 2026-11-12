@@ -44,7 +44,7 @@ UsbTask 必须保持在列表首位，让 CubeMX 把 USB 初始化留在 `StartU
 
 EKF 编译使用现有 CMSIS-DSP V1.6.0 的六个浮点矩阵源文件及 `ARM_MATH_MATRIX_CHECK`。
 Kalman 模块限制为单实例 6 状态、3 量测，使用 2048 字节静态 arena，实际占用 1604 字节，
-不占用 RTOS/libc 堆，重复初始化复用空间。RTOS 堆仍为 32 KB，实板可检查各任务栈高水位。
+不占用 RTOS/libc 堆，重复初始化复用空间。加入 Flash 任务后 RTOS 堆为 48 KiB，实板可检查各任务栈高水位。
 IMU 任务不进行字符串格式化或 USB 输出；需要通信时由业务层独立调用 USB 收发接口。
 
 ## 应用接口

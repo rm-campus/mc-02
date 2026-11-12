@@ -67,9 +67,9 @@ void Motor3508_SetCurrent(Motor3508 *motor, uint8_t slot, int16_t current);
  * @param size  数据长度。
  *
  * 函数处理 ID 为 0x201～0x204、长度为 8 的帧；
- * 其他帧直接返回。该函数在 CAN 接收回调中调用。
+ * 其他帧直接返回 false。成功更新返回 true。该函数在 CAN 接收回调中调用。
  */
-void Motor3508_Update(Motor3508 *motor,
+bool Motor3508_Update(Motor3508 *motor,
                       uint32_t id,
                       const uint8_t *data,
                       uint8_t size);

@@ -6,16 +6,17 @@
 
 ## 当前行为
 
-- C620 编号 1～4；FDCAN3 为标准经典帧、1 Mbps。
-- ChassisTask 每 1 ms 发送一帧 0x200，四路电流均为零。
+- C620 编号 1～4；FDCAN1 为标准经典帧、1 Mbps。
+- ChassisTask 每 1 ms 执行宏选择的单电机/四轮独立 PI，并统一发送一帧 0x200；单轮异常只撤掉该路电流。
 - RcTask 用 UART5 接收 FS-i6X/iA6B 的 25 字节 SBUS，超时/失控判无效。
 - MonitorTask 每 10 ms 更新状态，StatusTask 每 50 ms 更新 LED。
 - ServoBusTask 保留占位，不发送未知 UART 舵机协议。
 - ImuTask 每 1 ms 轮询 BMI088 并运行 C 版四元数 EKF；上电需保持静止完成 1000 样本校准。
-- UsbTask 服务 USB 收发队列并调用业务接收入口，发送由应用层显式调用。
+- UsbTask 服务 USB 队列，默认四轮模式运行后发 50 Hz 五通道纯 CSV，不发 ready；手动 motor_status 保留，Flash 命令关闭。
   IMU 接线、应用接口和错误码见 [IMU_INTEGRATION.md](IMU_INTEGRATION.md)。本次未接入恒温。
 
-这不是完整麦轮控制程序：尚未加入 PID、轮序/方向标定和运动学。
+已加入单电机/四轮独立速度 PI，尚未完成轮序/方向标定和运动学。当前配置与操作见
+[SINGLE_MOTOR_DEBUG.md](SINGLE_MOTOR_DEBUG.md)。
 六个模拟通道按文档由 -784～783 映射为 -660～660 整数；开关按原始值负/零/正输出 1/0/-1，不设中位容差。需在实际遥控器上校准端点和开关方向。
 
 ## LED
@@ -24,12 +25,15 @@
 |---|---|
 |紫色|CAN 初始化失败或 Bus-Off|
 |红色|尚未收到有效遥控、失控或超过 100 ms 未收到有效遥控|
-|黄色|遥控正常，但四个电机未全部在线（反馈超时 50 ms）|
-|绿色|遥控和四电机在线；依然只发送零电流|
+|黄色|遥控正常，但四个电机未全部在线（反馈超时 100 ms）|
+|绿色|遥控和四电机在线，不表示控制器是否已经启用|
 
 可在调试器调用 `Campus_CopyStatus()`、`Campus_CopyMotors()`、
 `Fxi6x_CopyData()` 获取任务侧的一致性快照。电流 SetCurrent 参数是协议原始值，
 不是安培。累计角度沿用参考代码，不保证上电首帧为零。
+
+外部 Flash 测试、50 Hz 原始转速记录、FireWater 车轮 rpm 回放和独立任务开关见
+[FLASH_TASKS.md](FLASH_TASKS.md)。底盘目标接口由后续控制模块发布，当前不使用虚假目标。
 
 ## 工程维护
 
@@ -39,7 +43,9 @@
   UART DMA 缓冲区不能位于 DTCM。
 - DMA 缓冲区独占 32 字节缓存行，已包含未来启用 DCache 时的缓存维护。
 - UART5 使用 100000 baud、9 位字长含偶校验、2 停止位；板载 Q1 已反相，RX 不再反相。
-- 当前不做 Bus-Off 自动恢复；状态可见，后续结合整车恢复策略实现。
+- 已采用 USTC-RoboWalker Stop/Start 的 Bus-Off 恢复方法：错误 ISR 请求，ChassisTask 与发送统一处理。
+  首次立即尝试，重复尝试间隔至少 100 ms；硬件退出 Bus-Off 后，活动轮任一新反馈可恢复总线发送，逐轮新反馈掩码控制各路电流。
+  HAL 执行失败进入 FAILED，不无限重试；motor_status 的 RECOVERY 行报告结果。恢复不自动解除电机停机锁存。
 - 下一步：上板核对遥控数据、四台电机反馈和 LED，再实现闭环控制。
 
 ## USB CDC 应用接口
@@ -90,11 +96,12 @@ result = UsbSerial_Printf("speed=%d\r\n", speed);
 ### 应用接收入口
 
 `App/Src/usb_app.c` 是明确的应用入口。`UsbTask` 持续服务收发队列，收到电脑数据后调用
-`Campus_UsbOnReceive(data, length)`，当前函数体为空。需要发送时由业务显式调用
-`UsbSerial_Send/Printf`。
+`Campus_UsbOnReceive(data, length)`，由它按换行分发 `flash:`、`read`、`status`、`clear`。
+普通发送可调用 `UsbSerial_Send/Printf`；需确认发送完成的业务使用 `UsbSerial_SendTracked`
+和 `UsbSerial_GetTxState`，自动擦除必须等待完成凭据。
 
-后续实现正式协议时，在 `Campus_UsbOnReceive(data, length)` 中处理数据。
-该函数运行于 UsbTask，参数仅在调用期间有效，默认不自动回复。
+后续业务协议继续由 `Campus_UsbOnReceive(data, length)` 统一分发。
+该函数运行于 UsbTask，参数仅在调用期间有效，长时间 Flash 操作通过后台任务执行。
 也可将接收消费转移到另一个任务，但此时应移除 UsbTask 中的对应读取，保持单消费者。
 
 `UsbTask` 使用 BelowNormal 优先级、1024 words（4096 字节）栈，每 1 tick 做一次有界服务。

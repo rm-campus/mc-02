@@ -22,6 +22,7 @@
 #include "dma.h"
 #include "fdcan.h"
 #include "spi.h"
+#include "octospi.h"
 #include "usart.h"
 #include "usb_device.h"
 #include "gpio.h"
@@ -101,7 +102,8 @@ int main(void)
   MX_SPI2_Init();
   MX_SPI6_Init();
   MX_UART5_Init();
-  MX_FDCAN3_Init();
+  MX_FDCAN1_Init();
+  MX_OCTOSPI2_Init();
   /* USER CODE BEGIN 2 */
 /* 接通 CAN 和电机反馈；尚不发送非零电流。 */
   /* Campus_Init 只启动 CAN 与电机反馈；DMA 接收在调度器启动后的 RcTask 中启动。

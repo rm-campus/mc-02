@@ -56,7 +56,7 @@
 
 /* External variables --------------------------------------------------------*/
 extern PCD_HandleTypeDef hpcd_USB_OTG_HS;
-extern FDCAN_HandleTypeDef hfdcan3;
+extern FDCAN_HandleTypeDef hfdcan1;
 extern DMA_HandleTypeDef hdma_uart5_rx;
 extern UART_HandleTypeDef huart5;
 extern TIM_HandleTypeDef htim6;
@@ -220,17 +220,17 @@ void OTG_HS_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles FDCAN3 interrupt 0.
+  * @brief This function handles FDCAN1 interrupt 0.
   */
-void FDCAN3_IT0_IRQHandler(void)
+void FDCAN1_IT0_IRQHandler(void)
 {
-  /* USER CODE BEGIN FDCAN3_IT0_IRQn 0 */
+  /* USER CODE BEGIN FDCAN1_IT0_IRQn 0 */
 
-  /* USER CODE END FDCAN3_IT0_IRQn 0 */
-  HAL_FDCAN_IRQHandler(&hfdcan3);
-  /* USER CODE BEGIN FDCAN3_IT0_IRQn 1 */
+  /* USER CODE END FDCAN1_IT0_IRQn 0 */
+  HAL_FDCAN_IRQHandler(&hfdcan1);
+  /* USER CODE BEGIN FDCAN1_IT0_IRQn 1 */
 
-  /* USER CODE END FDCAN3_IT0_IRQn 1 */
+  /* USER CODE END FDCAN1_IT0_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

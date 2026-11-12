@@ -3,8 +3,8 @@
  * @brief FDCAN 经典帧收发接口。
  *
  * 硬件连接：
- *   FDCAN3_RX = PD12
- *   FDCAN3_TX = PD13
+ *   FDCAN1_RX = PD0
+ *   FDCAN1_TX = PD1
  *
  * 通信参数：
  *   经典帧，1 Mbps，标准 ID。
@@ -21,6 +21,7 @@
 #include <stdint.h>
 
 #include "fdcan.h"
+#include "can_recovery.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,7 +30,7 @@ extern "C" {
 /**
  * @brief 初始化 FDCAN 并启动 RX FIFO0 中断。
  *
- * @param hcan 已由 MX_FDCANx_Init() 初始化的 FDCAN 句柄，例如 &hfdcan3。
+ * @param hcan 已由 MX_FDCANx_Init() 初始化的 FDCAN 句柄，例如 &hfdcan1。
  *
  * @return true  过滤器配置、外设启动和中断使能全部成功。
  * @return false 句柄为空，或上述任一步骤返回 HAL_ERROR。
@@ -52,7 +53,8 @@ bool Can_Init(FDCAN_HandleTypeDef *hcan);
  *
  * @note 该函数完成入队后立即返回。总线发送由 FDCAN 外设完成。
  */
-/* 当前由 ChassisTask 单一发送者使用；没有内部互斥或发送完成等待。 */
+/* 由 ChassisTask 单一发送者使用；每轮先调用 Can_ProcessRecovery。
+ * 恢复未完成/INIT/错误事件待处理时拒绝入队，短临界区协调 CAN IRQ，不等待发送完成。 */
 bool Can_Send(uint32_t id, const uint8_t *data, uint8_t size);
 
 #ifdef __cplusplus
