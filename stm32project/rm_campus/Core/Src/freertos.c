@@ -88,7 +88,7 @@ const osThreadAttr_t ServoBusTask_attributes = {
 osThreadId_t MonitorTaskHandle;
 const osThreadAttr_t MonitorTask_attributes = {
   .name = "MonitorTask",
-  .stack_size = 256 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for StatusTask */
@@ -247,15 +247,15 @@ void StartRcTask(void *argument)
 
 /* USER CODE BEGIN Header_StartChassisTask */
 /**
-  * @brief 底盘驱动联调任务：四个 M3508 反馈与统一 CAN 零电流发送。
-  * @note 1 ms 固定周期；麦轮解算和 PID 尚未接入。
+  * @brief 底盘联调任务：默认零电流，可配置单电机速度 PI 台架测试。
+  * @note 1 ms 周期；麦轮运动学尚未接入。
   * @param argument 未使用。
   */
 /* USER CODE END Header_StartChassisTask */
 void StartChassisTask(void *argument)
 {
   /* USER CODE BEGIN StartChassisTask */
-  /* 进入应用层 1 ms 循环：当前四路零电流联调，尚未接入 PID/麦轮解算。该函数内部不会正常返回。 */
+  /* 进入应用层 1 ms 循环；调试默认关闭，配置和遥控确认后仅运行一个电机。 */
 Campus_ChassisTask(argument);
   /* USER CODE END StartChassisTask */
 }

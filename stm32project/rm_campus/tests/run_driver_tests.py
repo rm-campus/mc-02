@@ -1,5 +1,13 @@
 from pathlib import Path
+import argparse
+import shutil
 import subprocess
+
+parser = argparse.ArgumentParser(description="Run host SBUS and motor driver tests")
+parser.add_argument("--cc", default=shutil.which("gcc"))
+args = parser.parse_args()
+if not args.cc:
+    parser.error("GCC not found: pass --cc path/to/gcc")
 
 root = Path(__file__).resolve().parents[1]
 out = root / 'tests' / 'host-build'
@@ -189,8 +197,7 @@ int main(void)
     return 0;
 }
 ''', encoding='utf-8')
-compiler = Path(r'E:\CLion\CLion 2026.2.2\bin\mingw\bin\gcc.exe')
-cmd = [str(compiler), '-std=c11', '-Wall', '-Wextra', '-Werror', '-I' + str(out),
+cmd = [args.cc, '-std=c11', '-Wall', '-Wextra', '-Werror', '-I' + str(out),
        '-I' + str(root / 'Bsp' / 'Inc'), str(out / 'test.c'),
        str(root / 'Bsp' / 'Src' / 'fxi6x.c'), str(root / 'Bsp' / 'Src' / 'motor_3508.c'),
        '-lm', '-o', str(out / 'driver_tests.exe')]

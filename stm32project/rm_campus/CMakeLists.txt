@@ -77,6 +77,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/bmi088.c
     Bsp/Src/imu_clock.c
     App/Src/campus_app.c
+    App/Src/motor_debug.c
     App/Src/usb_app.c
     App/Src/imu_app.c
     Algorithm/Src/imu_filter.c

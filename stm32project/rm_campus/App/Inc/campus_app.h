@@ -2,7 +2,7 @@
  * @file campus_app.h
  * @brief 校赛应用层接口：把底层驱动组织到现有 FreeRTOS 任务中。
  * 数据路径：UART5/DMA -> 遥控解析；FDCAN3 中断 -> 电机反馈；监测任务 -> LED。
- * 当前仅做零电流联调，未实现麦轮运动学、PID 或 UART 舵机协议。
+ * 默认零电流；可配置单电机速度 PI 调试，未实现麦轮运动学或 UART 舵机协议。
  * 快照接口用于任务上下文；不要在高优先级中断里调用它们。
  */
 #ifndef CAMPUS_APP_H
@@ -11,6 +11,13 @@
 #include <stdint.h>
 #include "motor_3508.h"
 #include "fxi6x.h"
+#include "motor_debug.h"
+
+typedef struct {
+    MotorDebug control;
+    MotorDebugInput input;
+    uint8_t motor_id;
+} CampusMotorDebugSnapshot;
 
 typedef struct
 {
@@ -34,6 +41,8 @@ void Campus_Init(void);
 void Campus_CopyStatus(CampusStatus *out);
 /* 复制四电机的一致性快照，避免复制过程中 CAN 中断改写某些字段。 */
 void Campus_CopyMotors(Motor3508 *out);
+/* 调试器可调用或通过 USB 文本查看该快照；仅底盘任务更新控制状态。 */
+void Campus_CopyMotorDebug(CampusMotorDebugSnapshot *out);
 /* 以下函数均为常驻任务主体，内部自带循环；入口参数当前未使用。 */
 void Campus_RcTask(void *argument);
 void Campus_ChassisTask(void *argument);

@@ -3,7 +3,7 @@
  * @brief 应用层任务与驱动的接线位置。
  * CAN 回调只做读帧和反馈解析；遥控协议在 RcTask 中解析；LED 仅由 StatusTask 更新。
  * 所有 ms 时间戳来自 HAL_GetTick；任务等待使用 FreeRTOS tick，工程 tick 为 1 kHz。
- * 此版本的 ChassisTask 始终发送四路零电流，绿色 LED 也不表示已启用运动。
+ * 默认发送四路零电流；启用单电机调试后仍需遥控开关确认。绿色不表示运动使能。
  */
 #include "campus_app.h"
 #include "can.h"
@@ -11,7 +11,10 @@
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "motor_debug_config.h"
+#include "usb_serial.h"
 #include <stddef.h>
+#include <math.h>
 
 /* 遥控超过此时间没有正常帧即离线；与任务心跳分别统计。 */
 #define RC_TIMEOUT_MS 100U
@@ -20,6 +23,16 @@
 /* command 由底盘任务写入；编码器、速度、电流和时间戳由 CAN 接收中断更新。 */
 static Motor3508 s_motors;
 static CampusStatus s_status;
+static CampusMotorDebugSnapshot s_motor_debug;
+
+void Campus_CopyMotorDebug(CampusMotorDebugSnapshot *out)
+{
+    if (out != NULL) {
+        taskENTER_CRITICAL();
+        *out = s_motor_debug;
+        taskEXIT_CRITICAL();
+    }
+}
 
 /**
  * @brief 初始化四台 M3508 的软件状态并启动 CAN 接收。
@@ -123,37 +136,91 @@ void Campus_RcTask(void *argument)
 }
 
 /**
- * @brief 每 1 ms 发送四路零电流，验证 CAN 发送与电机反馈链路。
+ * @brief 每 1 ms 运行可选的单电机速度 PI，并统一发送四路电流。
  * Motor3508_SetCurrent 的参数是协议原始电流值，0 表示不给驱动电流。
- * 当前不读取摇杆来驱动电机，后续接 PID 前应补充使能条件、轮序和方向标定。
+ * 默认关闭；开启后只允许配置的 C620 编号运行，其余三路始终为零。
  * can_tx_failures 统计提交 FIFO 失败，未统计物理总线的全部错误。
  */
 void Campus_ChassisTask(void *argument)
 {
     (void)argument;
+    const MotorDebugConfig config = MotorDebug_DefaultConfig();
+    const uint8_t slot = config.motor_id >= 1U && config.motor_id <= 4U ?
+        (uint8_t)(config.motor_id - 1U) : 0U;
+    MotorDebug debug;
+    MotorDebug_Init(&debug);
     TickType_t wake = xTaskGetTickCount();
+    uint32_t previous_ms = HAL_GetTick();
     for (;;)
     {
-        /* 本次只接通驱动链路：四路每 1 ms 发送零电流。
-         * 后续确认轮序、方向及 PID 参数后，再接入麦轮闭环目标。 */
-        for (uint8_t slot = 0U; slot < 4U; ++slot)
-        {
-            Motor3508_SetCurrent(&s_motors, slot, 0);
-        }
+        Fxi6x_Data rc;
+        Motor3508 motors;
+        Fxi6x_CopyData(&rc);
+        Campus_CopyMotors(&motors);
+        FDCAN_ProtocolStatusTypeDef protocol = {0};
+        const bool can_ok = s_status.can_ready &&
+            HAL_FDCAN_GetProtocolStatus(&hfdcan3, &protocol) == HAL_OK && !protocol.BusOff;
+        const uint32_t now = HAL_GetTick();
+        const MotorDebugInput input = {
+            .now_ms = now, .period_ms = (uint32_t)(now - previous_ms),
+            .rc_valid = rc.valid, .rc_received = rc.received,
+            .motor_received = (motors.received_mask & (1U << slot)) != 0U,
+            .can_ok = can_ok, .rc_ms = rc.last_valid_ms,
+            .feedback_ms = motors.last_feedback_ms[slot],
+            .enable_switch = rc.switch_a, .stick = rc.rocker_r_v,
+            .speed = motors.velocity[slot], .measured_current = motors.current[slot],
+            .temperature = motors.temperature[slot]
+        };
+        previous_ms = now;
+        MotorDebug_Step(&debug, &config, &input);
+        for (uint8_t i = 0U; i < 4U; ++i) Motor3508_SetCurrent(&s_motors, i, 0);
+        Motor3508_SetCurrent(&s_motors, slot, debug.command_raw);
         if (s_status.can_ready && !Motor3508_Send(&s_motors))
         {
+            MotorDebug_TxFailed(&debug);
+            /* 当前未入队；清缓存，下轮重发零。不能保证故障总线能送出撤流帧。 */
+            for (uint8_t i = 0U; i < 4U; ++i) Motor3508_SetCurrent(&s_motors, i, 0);
             taskENTER_CRITICAL();
             ++s_status.can_tx_failures;
             taskEXIT_CRITICAL();
         }
         taskENTER_CRITICAL();
-        s_status.chassis_heartbeat_ms = HAL_GetTick();
+        s_status.chassis_heartbeat_ms = now;
+        s_motor_debug.control = debug;
+        s_motor_debug.input = input;
+        s_motor_debug.motor_id = config.motor_id;
         taskEXIT_CRITICAL();
         /* 按绝对唤醒时刻安排 1 ms 周期，避免把本轮计算时间叠加进周期。
-         * 这不是硬件定时保证；后续 PID 接入后仍需测量执行时间和调度抖动。 */
+         * 超过 5 ms 或出现同毫秒追赶执行时撤流，需回关闭档重新启用。 */
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(1U));
     }
 }
+
+#if MOTOR_DEBUG_TELEMETRY
+/* 仅 MonitorTask 每 100 ms 调用。整数定点输出，避免 nano printf 的 %f。 */
+static int milli(float value)
+{
+    return isfinite(value) && fabsf(value) < 1000000.0f ? (int)(value * 1000.0f) : 0;
+}
+
+static void motor_debug_telemetry(uint8_t online, bool rc_online, const Motor3508 *motors)
+{
+    CampusMotorDebugSnapshot d;
+    Campus_CopyMotorDebug(&d);
+    /* 队列忙/断开时丢弃本条观测，不重试阻塞监测或控制。 */
+    (void)UsbSerial_Printf(
+        "DBG t=%lu st=%u why=%u id=%u rc=%u sa=%d joy=%d on=%u dt=%lu "
+        "tgt=%d ref=%d vel=%d out=%d cur=%d temp=%u w=%d/%d/%d/%d\r\n",
+        (unsigned long)d.input.now_ms, (unsigned)d.control.state,
+        (unsigned)d.control.reason, (unsigned)d.motor_id, (unsigned)rc_online,
+        (int)d.input.enable_switch, (int)d.input.stick, (unsigned)online,
+        (unsigned long)d.input.period_ms, milli(d.control.target),
+        milli(d.control.reference), milli(d.input.speed), milli(d.control.output_a),
+        milli(d.input.measured_current), (unsigned)d.input.temperature,
+        milli(motors->velocity[0]), milli(motors->velocity[1]),
+        milli(motors->velocity[2]), milli(motors->velocity[3]));
+}
+#endif
 
 /**
  * @brief 每 10 ms 汇总遥控在线、电机在线和 CAN Bus-Off 状态。
@@ -164,6 +231,9 @@ void Campus_MonitorTask(void *argument)
 {
     (void)argument;
     TickType_t wake = xTaskGetTickCount();
+#if MOTOR_DEBUG_TELEMETRY
+    uint32_t telemetry_ms = HAL_GetTick();
+#endif
     for (;;)
     {
         Fxi6x_Data rc;
@@ -194,6 +264,12 @@ void Campus_MonitorTask(void *argument)
         s_status.can_bus_off = bus_off;
         s_status.monitor_heartbeat_ms = now;
         taskEXIT_CRITICAL();
+#if MOTOR_DEBUG_TELEMETRY
+        if ((uint32_t)(now - telemetry_ms) >= 100U) {
+            telemetry_ms = now;
+            motor_debug_telemetry(online, s_status.rc_online, &motors);
+        }
+#endif
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(10U));
     }
 }
@@ -201,7 +277,7 @@ void Campus_MonitorTask(void *argument)
 /**
  * @brief 单独管理板载 RGB LED，避免多个任务同时使用静态发送缓冲区。
  * 状态优先级：CAN 故障（紫）> 遥控无效（红）> 电机不齐（黄）> 全在线（绿）。
- * @note 绿色仅表示通信在线；当前仍输出零电流。LED 发送失败返回值目前未上报。
+ * @note 绿色仅表示通信在线，不表示调试器已启用。LED 发送失败目前未上报。
  */
 void Campus_StatusTask(void *argument)
 {
@@ -225,7 +301,7 @@ void Campus_StatusTask(void *argument)
         }
         else
         {
-            (void)Led_SetRGB(0U, 20U, 0U);   /* 绿：遥控及四电机在线，仍为零电流。 */
+            (void)Led_SetRGB(0U, 20U, 0U);   /* 绿：遥控及四电机在线。 */
         }
         /* 状态指示不参与快速控制；每 50 tick 更新一次，给高优先级任务让出 CPU。 */
         osDelay(50U);
