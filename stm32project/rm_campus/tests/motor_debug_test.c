@@ -163,12 +163,12 @@ int main(void)
 {
     MotorDebugConfig defaults=MotorDebug_DefaultConfig();
     assert(defaults.enabled && defaults.kp == MOTOR_DEBUG_KP && defaults.ki == MOTOR_DEBUG_KI);
-    assert(fabsf(defaults.max_speed * 60.0f / 6.283185307179586f - 450.0f) < 0.001f);
+    assert(fabsf(defaults.max_speed * 60.0f / 6.283185307179586f - 400.0f) < 0.001f);
     safety(); step_target_and_pi(); continuous_running();
     reset(); arm();
     for (int stick = -660; stick <= 660; ++stick) {
         in.stick=(int16_t)stick; step(1);
-        assert(fabsf(d.target * 60.0f / 6.283185307179586f - stick * 450.0f / 660.0f) < 0.001f);
+        assert(fabsf(d.target * 60.0f / 6.283185307179586f - stick * 400.0f / 660.0f) < 0.001f);
     }
     reset(); in.enable_switch=1; step(1); in.enable_switch=-1;
     step(1);

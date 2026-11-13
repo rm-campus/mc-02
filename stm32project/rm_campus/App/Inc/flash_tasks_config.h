@@ -1,7 +1,8 @@
 #ifndef FLASH_TASKS_CONFIG_H
 #define FLASH_TASKS_CONFIG_H
 
-/* 独立编译开关：单电机实时调试阶段关闭；实地记录时再开启。 */
+/* 实时调试阶段关闭；四轮实地记录时先关闭实时回传，再开启日志。 */
+#include "motor_debug_config.h"
 #ifndef FLASH_TEST_TASK_ENABLE
 #define FLASH_TEST_TASK_ENABLE 0
 #endif
@@ -13,15 +14,18 @@
 #error "Task enable switches must be 0 or 1"
 #endif
 #define FLASH_TASKS_ENABLE (FLASH_TEST_TASK_ENABLE || MOTOR_SPEED_LOG_TASK_ENABLE)
+#if MOTOR_SPEED_LOG_TASK_ENABLE && MOTOR_DEBUG_MODE != MOTOR_DEBUG_MODE_FOUR
+#error "Motor speed logging requires four-motor mode"
+#endif
 #define FLASH_TEST_BASE 0x000000UL
 #define FLASH_LOG_META_BASE 0x001000UL
 #define FLASH_LOG_DATA_BASE 0x002000UL
 #ifndef FLASH_LOG_END
 #define FLASH_LOG_END 0x800000UL
 #endif
-#define MOTOR_LOG_PERIOD_MS 20U
+#define MOTOR_LOG_PERIOD_MS 10U /* 新日志 100 Hz；回放使用该轮日志头中的采样周期。 */
 #define MOTOR_LOG_AFTER_REACHED_MS 5000U
-#define MOTOR_LOG_OFFLINE_MS 50U
+#define MOTOR_LOG_OFFLINE_MS MOTOR_DEBUG_FEEDBACK_TIMEOUT_MS
 #define MOTOR_LOG_RC_TIMEOUT_MS 100U
 #define MOTOR_LOG_TARGET_TIMEOUT_MS 100U
 /* 车轮 rpm 容差；非零目标还要求实际反馈同方向且非零。 */

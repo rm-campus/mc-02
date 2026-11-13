@@ -74,6 +74,12 @@ def main():
             (folder / name).write_text(data, encoding='utf-8')
         common = [args.cc, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
                   '-I' + str(folder), '-I' + str(root / 'App/Inc'), '-I' + str(root / 'Bsp/Inc')]
+        incompatible = subprocess.run(common + ['-DMOTOR_SPEED_LOG_TASK_ENABLE=1', '-DMOTOR_DEBUG_MODE=0',
+                                               '-x', 'c', '-fsyntax-only', '-'],
+                                      input='#include "flash_tasks_config.h"\n', text=True,
+                                      capture_output=True, timeout=30)
+        assert incompatible.returncode != 0 and 'requires four-motor mode' in incompatible.stderr
+        print('PASS: single-motor mode is rejected when Flash logging is enabled.')
         driver = folder / 'driver.exe'
         subprocess.run(common + [str(root / 'tests/w25q64_test.c'), str(root / 'Bsp/Src/w25q64.c'),
                                   '-o', str(driver)], check=True, timeout=30)
@@ -81,16 +87,19 @@ def main():
         for test_on, log_on in ((1, 1), (1, 0), (0, 1), (0, 0)):
             exe = folder / f'app_{test_on}_{log_on}.exe'
             sources = ['tests/flash_app_test.c', 'App/Src/flash_tasks.c', 'App/Src/flash_test.c',
-                       'App/Src/motor_speed_log.c', 'App/Src/chassis_targets.c']
+                       'App/Src/motor_speed_log.c']
             subprocess.run(common + [f'-DFLASH_TEST_TASK_ENABLE={test_on}',
-                                      f'-DMOTOR_SPEED_LOG_TASK_ENABLE={log_on}', '-DFLASH_LOG_END=0x6000UL'] +
+                                      f'-DMOTOR_SPEED_LOG_TASK_ENABLE={log_on}', '-DFLASH_LOG_END=0xA000UL'] +
                            [str(root / name) for name in sources] + ['-lm', '-o', str(exe)], check=True, timeout=30)
             scenarios = ['switches']
             if test_on:
                 scenarios += ['echo', 'echo_reconnect', 'parser']
             if log_on:
-                scenarios += ['log', 'dynamic', 'no_target', 'reconnect', 'recovery',
-                              'incomplete', 'full', 'tick_wrap', 'rc_loss', 'late', 'enqueue_race']
+                scenarios += ['log', 'dynamic', 'start_conditions', 'nonzero_boot', 'reconnect', 'recovery',
+                              'incomplete', 'full', 'tick_wrap', 'rc_loss', 'late', 'enqueue_race',
+                              'local_fault', 'fault_not_reached', 'control_stale', 'switch_off', 'all_stopped',
+                              'invalid_target', 'overflow', 'legacy', 'erase_recovery',
+                              'cadence100', 'old_period', 'old_erase_recovery', 'bad_period']
             for scenario in scenarios:
                 subprocess.run([str(exe), scenario], check=True, timeout=20)
 

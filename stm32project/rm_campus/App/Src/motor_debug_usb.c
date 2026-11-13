@@ -70,7 +70,7 @@ void MotorDebugUsb_Process(void)
         s_announced = false;
         s_pending = false;
 #if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
-        s_announced = true; /* 四轮只发五通道数字，不发送 ready。 */
+        s_announced = true; /* 四轮只发九通道数字，不发送 ready。 */
         s_last_ms = d.input.now_ms;
 #endif
     }
@@ -98,11 +98,12 @@ void MotorDebugUsb_Process(void)
     s_last_ms = d.input.now_ms; /* 不追赶补发；下一帧使用最新快照。 */
     if (usb.tx_buffered != 0U) return;
 #if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
-    int values[5] = {milli(d.common_target * (60.0f / 6.283185307179586f))};
+    int values[9] = {milli(d.common_target * (60.0f / 6.283185307179586f))};
     for (unsigned i = 0; i < 4U; ++i) {
         const MotorDebugInput *in = &d.wheel[i].input;
         bool online = in->motor_received && (uint32_t)(d.input.now_ms - in->feedback_ms) < MOTOR_DEBUG_FEEDBACK_TIMEOUT_MS;
         values[i+1U] = online ? milli(in->speed * (60.0f / 6.283185307179586f)) : 0;
+        values[i+5U] = online ? milli(in->measured_current) : 0; /* C620 反馈电流，单位 A。 */
     }
 #else
     int values[4] = {
@@ -113,7 +114,7 @@ void MotorDebugUsb_Process(void)
     };
 #endif
     const unsigned channels = sizeof(values) / sizeof(values[0]);
-    char frame[96];
+    char frame[128]; /* 九列均可完整容纳；USB 按 LF 分帧，不依赖 64 字节包边界。 */
     unsigned used = 0U;
     for (unsigned i = 0; i < channels; ++i) {
         unsigned magnitude = (unsigned)(values[i] < 0 ? -values[i] : values[i]);

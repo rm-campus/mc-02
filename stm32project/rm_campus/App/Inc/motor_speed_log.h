@@ -2,7 +2,6 @@
 #define MOTOR_SPEED_LOG_H
 #include <stdbool.h>
 #include <stdint.h>
-#include "fxi6x.h"
 typedef enum {
     MOTOR_LOG_BOOT, MOTOR_LOG_PREPARING, MOTOR_LOG_READY, MOTOR_LOG_RECORDING,
     MOTOR_LOG_FLUSHING, MOTOR_LOG_WAIT_READ, MOTOR_LOG_REPLAYING,
@@ -11,10 +10,10 @@ typedef enum {
 typedef struct {
     MotorLogState state;
     uint32_t records, error, stop_reason;
+    uint32_t period_ms; /* 当前日志采样/回放周期；READY 时为新记录的默认周期。 */
     bool reached, target_valid;
 } MotorLogStatus;
 bool MotorLog_Create(void);
-void MotorLog_OnRcFrame(const Fxi6x_Data *rc);
 void MotorLog_Process(uint32_t now);
 bool MotorLog_RequestRead(void);
 bool MotorLog_RequestClear(void);

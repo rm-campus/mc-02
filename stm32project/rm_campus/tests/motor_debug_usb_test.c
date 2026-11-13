@@ -56,13 +56,13 @@ int main(void)
     snap.control.target=225.0f*(6.283185307179586f/60.0f);
     snap.input.speed=-218.5f*(6.283185307179586f/60.0f);
     snap.control.command_raw=344; snap.input.measured_current=-0.398f;
-    for(unsigned i=2001;i<2020;++i) process(i);
+    for(unsigned i=2001;i<2005;++i) process(i);
     assert(data_count==0);
-    process(2020);
+    process(2005);
     assert(strcmp(last,"225.000,-218.500,0.420,-0.398\n")==0);
     complete();
-    for(unsigned i=2021;i<=3000;++i) { process(i); complete(); }
-    assert(data_count==50); /* Exactly 50 samples in 1 second. */
+    for(unsigned i=2006;i<=3000;++i) { process(i); complete(); }
+    assert(data_count==200); /* Exactly 200 samples in 1 second. */
 
     busy=true; process(3020); unsigned before=sends;
     busy=false; process(3021); assert(sends==before);
@@ -89,9 +89,9 @@ int main(void)
     snap.control.state=MOTOR_DEBUG_WAIT_OFF; process(6044); complete();
     before=sends; process(7000); assert(sends==before);
 
-    start(UINT32_MAX-10U); before=sends;
-    process(8U); assert(sends==before);
-    process(9U); assert(sends==before+1); complete();
-    puts("PASS: startup silence, ready completion, four units/signs, 50Hz, busy/no backlog, stop/rearm, reconnect/race and tick wrap.");
+    start(UINT32_MAX-2U); before=sends;
+    process(1U); assert(sends==before);
+    process(2U); assert(sends==before+1); complete();
+    puts("PASS: startup silence, ready completion, four units/signs, 200Hz, busy/no backlog, stop/rearm, reconnect/race and tick wrap.");
     return 0;
 }

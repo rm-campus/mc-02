@@ -12,7 +12,7 @@
 - MonitorTask 每 10 ms 更新状态，StatusTask 每 50 ms 更新 LED。
 - ServoBusTask 保留占位，不发送未知 UART 舵机协议。
 - ImuTask 每 1 ms 轮询 BMI088 并运行 C 版四元数 EKF；上电需保持静止完成 1000 样本校准。
-- UsbTask 服务 USB 队列，默认四轮模式运行后发 50 Hz 五通道纯 CSV，不发 ready；手动 motor_status 保留，Flash 命令关闭。
+- UsbTask 服务 USB 队列，默认四轮模式运行后发 200 Hz 九通道纯 CSV（目标、四路转速、四路反馈电流），不发 ready；手动 motor_status 保留，Flash 命令关闭。
   IMU 接线、应用接口和错误码见 [IMU_INTEGRATION.md](IMU_INTEGRATION.md)。本次未接入恒温。
 
 已加入单电机/四轮独立速度 PI，尚未完成轮序/方向标定和运动学。当前配置与操作见
@@ -32,7 +32,7 @@
 `Fxi6x_CopyData()` 获取任务侧的一致性快照。电流 SetCurrent 参数是协议原始值，
 不是安培。累计角度沿用参考代码，不保证上电首帧为零。
 
-外部 Flash 测试、50 Hz 原始转速记录、FireWater 车轮 rpm 回放和独立任务开关见
+外部 Flash 测试、100 Hz 四轮目标/原始转速记录、八通道纯 CSV 回放和独立任务开关见
 [FLASH_TASKS.md](FLASH_TASKS.md)。底盘目标接口由后续控制模块发布，当前不使用虚假目标。
 
 ## 工程维护

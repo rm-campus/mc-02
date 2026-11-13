@@ -1,15 +1,15 @@
 # rm_campus：达妙 MC02 校赛电控工程
 
-开发交接快照：**2026-11-12**。本目录是 STM32 固件工程根目录。
+开发交接快照：**2026-11-13**。本目录是 STM32 固件工程根目录。
 
 工程面向四轮麦克纳姆底盘与后续机械臂。主控为达妙 MC02（STM32H723VGT6），使用 HAL、
 FreeRTOS/CMSIS-RTOS2、CMake/Ninja 和 GNU Arm 工具链。
 
-**当前默认四轮联调，宏可切换单电机模式。ID1～4 独立 PI、独立故障停机，统一使用左摇杆竖直 ±450 rpm 目标。
+**当前默认四轮联调，宏可切换单电机模式。ID1～4 独立 PI、独立故障停机，统一使用左摇杆竖直 ±400 rpm 目标。
 最左拨杆先 +1 确认关闭，再 -1 启用，各电机独立检查回中 300 ms 与基本静止；健康电机不等待缺失电机。**
-四轮模式 50 Hz 纯 CSV 五通道：公共原目标 rpm、ID1/2/3/4 实测 rpm，不发送 ready。
-单电机模式保留 ready，随后 50 Hz 纯 CSV 四通道：目标 rpm、实测 rpm、指令 A、反馈 A。
-两种模式均无运行时限，共用 ±15 A、110℃ 与 100 ms 电机反馈超时。两个 Flash 任务开关均为 0。
+四轮模式 200 Hz 纯 CSV 九通道：公共原目标 rpm、ID1/2/3/4 实测 rpm、ID1/2/3/4 反馈电流 A，不发送 ready。
+单电机模式保留 ready，随后 200 Hz 纯 CSV 四通道：目标 rpm、实测 rpm、指令 A、反馈 A。
+两种模式均无运行时限，共用 ±9.5 A、110℃ 与 100 ms 电机反馈超时。两个 Flash 任务开关均为 0。
 当前电机总线已切换到板载 CAN1（FDCAN1，PD0/RX、PD1/TX）；电调接线需同步移到 CAN1。
 上电后可发送 `motor_status` 加 LF 查询选定电机反馈、CAN 状态与控制故障，不需要先进入运行或收到 ready。
 按用户要求，当前 `MOTOR_DEBUG_CAN_FAULT_ENABLE=0`：临时禁用 CAN 状态异常/发送入队失败触发的软件停机。
@@ -31,8 +31,8 @@ CAN 诊断和 LED 指示保留；反馈达到 100 ms 未更新时，仅对应电
 4. [IMU_INTEGRATION.md](IMU_INTEGRATION.md)：BMI088、四元数 EKF、校准、坐标及限制。
 
 继续开发前应重新核对实际源码和工作区改动；本文不是已经完成上板验收的声明。
-当前最重要的待接接口是 `Chassis_SetTargetWheelRpm()`：由未来底盘模块逐帧发布真实四轮车轮 rpm。
-不要用占位零值或首次遥控帧的目标替代当前目标。单电机模块当前不发布四轮目标；烧录和推送需另行指示。
+Flash 日志已直接读取 `Campus_CopyMotorStatus()` 中的四轮真实控制目标、反馈和 RUNNING 状态，
+不再依赖 `Chassis_SetTargetWheelRpm()`。该预留发布接口保留，后续底盘必须维护真实四轮目标快照；烧录和推送需另行指示。
 
 ## 硬件与外设
 
@@ -57,12 +57,12 @@ W25 驱动使用普通单线指令和 24 位地址，不能因 CubeMX 配了四�
 | SBUS 遥控接收 | 已实现 DMA、组帧、十通道解析、失控处理；用户完成实机通道映射测试 |
 | 遥控 5 Hz USB 临时回传 | 已按用户要求彻底删除，原 `CAMPUS_USB_RC_TEST_ENABLE` 宏也已删除 |
 | CAN / M3508 | 1 ms 四路独立 PI，统一一帧 0x200 电流控制；已有 Bus-Off 恢复 |
-| 调试模式 | 默认 FOUR，单电机 SINGLE 可选 ID1～4；四轮各有 Kp/Ki，初始均为 0.05/0；无运行时限 |
+| 调试模式 | 默认 FOUR，单电机 SINGLE 可选 ID1～4；四轮各有 Kp/Ki，Kp 均为 3.0，Ki 按 ID1～4 为 0.1/0.08/0.12/0.1，参数可逐轮独立修改；无运行时限 |
 | USB CDC | 已实现有界收发队列、会话处理和实际发送完成凭据 |
 | BMI088 / 姿态 | 已接入采集、静止校准和 C 版四元数 EKF；未接入恒温、绝对航向或位置估计 |
 | 外部 Flash | `.ioc`、初始化、HAL OSPI 和 W25Q64 驱动均已接入正式工程 |
 | Flash 测试任务 | 功能保留，当前关闭；USB 测试帧写 Flash→实际读回→USB 完成后擦除 |
-| 电机日志 | 功能保留，当前关闭；50 Hz 原始转速记录、read 后回放与自动清理 |
+| 电机日志 | 已适配四轮，当前关闭；100 Hz 保存四路目标和原始转速，read 回放八列 CSV 后清理 |
 | 底盘目标接口 | 已提供线程安全发布/快照接口；当前底盘尚未调用、目标默认无效 |
 | 底盘闭环 | 已有四轮独立速度 PI；运动学、轮序与方向标定尚未完成 |
 | UART 舵机/机械臂 | ServoBusTask 仅占位，协议与控制尚未接入 |
@@ -97,17 +97,25 @@ Flash JEDEC ID、实际擦写、任务栈高水位、四轮方向和时序仍需
 - 减速比为 `3591/187 ≈ 19.2032`。车轮直接连接输出轴时，车轮 rpm = 转子 rpm ÷ 减速比 × 方向。
 - 当前方向掩码为 0，电调 ID 与前后左右轮位尚未实测标定，不能假设 ID 1 就是某个轮位。
 
-以下是保留的 Flash 日志模式，当前关闭，实时单电机模式不执行这些记录规则。
-日志保存四个小端 int16 原始 rpm，每条 8 字节，离线电机写 0；不增加反馈年龄、有效掩码或 CRC32。
-回放必须重新从 Flash 读取，再换算车轮 rpm，以 `speed:a,b,c,d\n` 发送，不能用原采样 RAM 代替 Flash。
-VOFA 的 Δt 设置为 20 ms。
+Flash 离线日志仅支持 FOUR，默认关闭；开启日志前须将 MOTOR_DEBUG_TELEMETRY 置 0。
+日志直接读取现有控制快照：四台均 RUNNING 且任意轮目标非零即开始，正负均可，不依赖摇杆边沿。
+四路目标全零立即结束；四台在线、RUNNING 且首次同时达到各自当前目标后 5 秒结束，计时不重置。
+拨杆关闭、遥控失联、控制快照超时、全部退出 RUNNING 或存储异常也会结束；单轮故障不结束整组记录。
+日志不控制电机，不增加电机运行时限。首次就绪可立即触发；回放清理后需启动条件先解除再成立。
 
-开始：左水平或左竖直任一轴从精确 0 变非 0。结束：四轮均在线并首次同时达到各自当前有效目标后 5 秒，
-或左摇杆双轴提前回零。目标必须来自后续底盘模块的当前帧，首次达标后不因目标波动重置计时。
-回零立即停止采样，不包括后续制动过程；日志任务不发送制动指令。
+MLG2 每条 32 字节：四个 int32 历史目标（0.001 rpm）、四个 int16 原始转子 rpm、8 字节预留。
+不增加逐条时间戳、反馈年龄、有效掩码或 CRC32。离线电机写 0，反馈在线阈值与控制统一为 <100 ms。
+256 条队列占 8 KiB，100 Hz 下日志分区约可存 43.6 分钟。旧 MLG1 日志报 error=103 并保留，需处理后显式 clear。
+新日志按 100 Hz 记录，收到 read 后重新从 Flash 读取，以 100 Hz 回放八列纯 CSV：
 
-当前目标接口未接入时，达标计时不会触发，但仍可用摇杆开始、回零结束验证日志。
-发布接口见 [chassis_targets.h](App/Inc/chassis_targets.h)，目标单位为车轮 rpm，100 ms 内需刷新。
+```text
+目标1,实际1,目标2,实际2,目标3,实际3,目标4,实际4
+```
+
+上行仅表示列含义，线上不发送表头。全部为输出轴 rpm，三位小数、LF 结束，无 speed: 前缀或 ready。
+电脑按 status 的 period_ms 绘图，新日志为 10 ms；旧 50 Hz MLG2 保留 20 ms 回放周期。
+最后一帧 USB 确认完成后才擦除，断线保留日志并可重新 read。
+实时模式为单轮四列/四轮九列，均为 200 Hz；与离线八列日志通过宏切换。
 
 ## FreeRTOS 任务与开关
 
@@ -116,12 +124,12 @@ VOFA 的 Δt 设置为 20 ms。
 | 任务 | 优先级 | 栈 / words | 主要工作 |
 |---|---|---:|---|
 | ImuTask | High2 / 42 | 1024 | 约 1 ms 周期采集与 EKF |
-| RcTask | High1 / 41 | 512 | 遥控 DMA 事件处理、解析与边沿通知 |
+| RcTask | High1 / 41 | 512 | 遥控 DMA 事件处理与解析 |
 | ChassisTask | High / 40 | 1024 | 1 ms 单电机/四轮独立 PI、逐轮启停与 CAN 恢复 |
 | ServoBusTask | AboveNormal / 32 | 512 | 舵机占位 |
 | MonitorTask | Normal / 24 | 256 | 10 ms 在线状态汇总 |
-| MotorSpeedLogTask | Normal / 24 | 512 | 当前不创建；启用后 20 ms 采样或回放 |
-| UsbTask | BelowNormal / 16 | 1024 | USB 服务、50 Hz CSV 及 motor_status 手动诊断 |
+| MotorSpeedLogTask | Normal / 24 | 512 | 当前不创建；启用后 10 ms 采样或回放 |
+| UsbTask | BelowNormal / 16 | 1024 | USB 服务、200 Hz CSV 及 motor_status 手动诊断 |
 | FlashServiceTask | BelowNormal / 16 | 512 | 当前不创建；唯一实际操作 W25Q64 的任务 |
 | StatusTask | Low / 8 | 256 | LED 状态 |
 | FlashTestTask | Low / 8 | 512 | 当前不创建；USB→Flash→USB 测试事务 |
@@ -151,13 +159,13 @@ build/Debug/             当前有效构建输出
 
 - `App/Src/campus_app.c`：电机快照、CAN 回调、遥控/底盘/监测任务。
 - `Bsp/Src/can.c`：Bus-Off ISR 请求、任务内 Stop/Start、旧队列清空检查及恢复发送门；首次立即尝试，重复尝试至少间隔 100 ms。
-- `App/Src/motor_debug.c`：速度 PI、逐轮启停；`motor_debug_usb.c`：单电机四通道/四轮五通道 CSV。
+- `App/Src/motor_debug.c`：速度 PI、逐轮启停；`motor_debug_usb.c`：单电机四通道/四轮九通道 CSV。
 - `App/Src/motor_status_usb.c`：只读诊断回复及输出协调；CAN 错误由 ChassisTask 统一采集并锁存，查询不清零。
-- `Bsp/Src/fxi6x.c`：每帧解析后调用弱钩子 `Fxi6x_OnFrame()`；日志模块启用时提供强实现。
+- `Bsp/Src/fxi6x.c`：保留每帧弱钩子；日志不再覆盖该钩子，改为读取现有控制快照。
 - `App/Src/usb_app.c` → `flash_tasks.c`：唯一 USB 接收消费者、换行组帧、命令分发。
 - `flash_test.c` / `motor_speed_log.c` → `flash_service.c` → `Bsp/Src/w25q64.c`：异步业务到 Flash 操作。
 - `Bsp/Src/usb_serial.c`：发送队列、会话、ZLP 与发送完成凭据；入队成功不等于传输完成。
-- `App/Src/chassis_targets.c`：目标发布与新鲜度判断；不包含遥控到轮速的换算。
+- `App/Src/chassis_targets.c`：保留的目标发布接口，当前日志不依赖它；不包含底盘运动学。
 
 ## 编译与测试
 
@@ -198,10 +206,10 @@ python tests/run_imu_pipeline_tests.py
 - driver：SBUS、实测通道映射、数值转换、原始电机反馈等。
 - can_recovery：真实 CAN BSP 配合模拟硬件寄存器，验证 Stop/Start、旧帧清空、选定电机新反馈、重试间隔及 HAL 失败。
 - usb_serial：队列、异步发送、会话、发送完成凭据。
-- motor_debug：线性映射、拨杆启停、故障撤流、真实 CAN 帧、ready 完成顺序、50 Hz、断线重连；
+- motor_debug：线性映射、拨杆启停、故障撤流、真实 CAN 帧、ready 完成顺序、200 Hz、断线重连；
   另覆盖 motor_status 未接电机/反馈超时/错误统计、命令分包、重复合并、USB 输出占用和会话竞态。
 - flash：真实业务源文件＋模拟 NOR/USB/遥控/电机，覆盖四种开关组合、跨页、断线、当前目标、
-  松杆、首次达标后 5 秒、50 Hz 回放、发送完成后擦除、重启恢复和异常边界。
+  正负目标触发、目标全零结束、首次达标后 5 秒、八列回放、旧格式保护、发送完成后擦除和重启恢复。
 - imu：滤波和采集/校准流水线。
 
 USB/Flash 测试脚本支持 `--cc <主机gcc路径>`；driver 脚本目前使用本机 CLion GCC 固定路径，移机需调整。
@@ -222,8 +230,8 @@ USB/Flash 测试脚本支持 `--cc <主机gcc路径>`；driver 脚本目前使�
 - 先按 SINGLE_MOTOR_DEBUG.md 架空验证单电机、回传和保护；初始 PI 未实机整定。
 - 实地记录阶段重新启用 Flash 后，再验证 `status`、`flash:`、`read` 全链路。
 - 确认四电机 ID 对应轮位、实际方向及机械传动比。
-- 在已有 ChassisTask 中实现遥控到四轮目标的运动学、限幅和控制逻辑，再发布当前目标快照。
-- 在完整控制条件下验证四轮首次同时达标后 5 秒结束；不要额外加入未约定的持续稳定时间。
+- 在已有 ChassisTask 中实现遥控到四轮目标的运动学、限幅和控制逻辑，并维护 wheel[i].control.target 和运行状态快照。
+- 上板验证非零四轮目标触发、八列历史目标/反馈、首次同时达标后 5 秒结束与最后一帧完成后擦除。
 - 分别整定四路 PI 并确认轮位/方向，再接底盘运动学；日志模块不负责运动控制。
 - 机械臂舵机协议和 IMU 加热均待后续明确需求。
 - 已知数据完整性边界：日志按用户要求没有 CRC；中途断电恢复不保证，状态说明见协议文件。
@@ -231,7 +239,7 @@ USB/Flash 测试脚本支持 `--cc <主机gcc路径>`；driver 脚本目前使�
 ## GitHub 与工作区状态
 
 2026-11-12 已选择性合入 feat/single-motor-speed-debug 的 `13dda7dc9b47fe0f398cd592e7947db9debb269b`，
-后续已扩展为宏切换单电机/四轮独立 PI、左摇杆 ±450 rpm、50 Hz 纯 CSV 和逐轮故障隔离，
+后续已扩展为宏切换单电机/四轮独立 PI、左摇杆 ±400 rpm、200 Hz 纯 CSV 和逐轮故障隔离，
 并移植 USTC Bus-Off 恢复。Flash 功能及其关闭配置完整保留。没有导入该分支的备用构建脚本（本机 CMake 正常）。
 
 远端仓库：[rm-campus/mc-02](https://github.com/rm-campus/mc-02)，远端固件目录为

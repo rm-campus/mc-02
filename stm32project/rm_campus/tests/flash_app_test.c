@@ -2,7 +2,6 @@
 #include "flash_test.h"
 #include "motor_speed_log.h"
 #include "flash_service.h"
-#include "chassis_targets.h"
 #include "campus_app.h"
 #include "usb_serial.h"
 #include <assert.h>
@@ -20,9 +19,12 @@ static unsigned qhead, qtail, qcount;
 static uint32_t finish_at;
 static int mutate_echo;
 static Motor3508 motors;
+static CampusMotorDebugSnapshot debug;
 static Fxi6x_Data rc;
 static uint8_t online_mask = 15;
-static int send_rc = 1, publish_target;
+static int send_rc = 1, publish_target = 1;
+static uint8_t running_mask = 15;
+static bool service_hold;
 static float target[4];
 static bool usb_ready = true, usb_hold;
 static uint32_t usb_session = 1, queued, completed, usb_due;
@@ -36,6 +38,11 @@ static int reconnect_during_send;
 uint32_t HAL_GetTick(void) { return tick; }
 void Error_Handler(void) { assert(!"Error_Handler"); }
 void Campus_CopyMotors(Motor3508 *out) { *out = motors; }
+void Campus_CopyMotorStatus(CampusMotorStatusSnapshot *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->now_ms = tick; out->motors = motors; out->debug = debug; out->rc = rc;
+}
 osThreadId_t osThreadNew(void (*fn)(void *), void *arg, const osThreadAttr_t *attrs)
 { (void)fn; (void)arg; assert(attrs->stack_size == 2048); return (void *)(uintptr_t)++thread_count; }
 osThreadId_t osThreadGetId(void) { return (void *)1; }
@@ -63,6 +70,7 @@ bool FlashService_TakeResult(FlashJob *job, W25Q64Result *result)
 }
 static void service_step(void)
 {
+    if (service_hold) return;
     if (active && (int32_t)(tick - finish_at) >= 0)
     {
         if (active->operation == FLASH_READ)
@@ -103,7 +111,15 @@ UsbSerialResult UsbSerial_SendTracked(const void *data, uint16_t length, UsbSeri
     assert(length > 0 && length <= sizeof(usb_pending));
     memcpy(usb_pending, data, length); usb_length = length; queued += length; usb_due = tick + 2;
     if (ticket) { ticket->session_id = usb_session; ticket->end_bytes = queued; }
-    if (length >= 6 && memcmp(data, "speed:", 6) == 0) frame_times[frame_count++] = tick;
+    const char *text = data;
+    MotorLogStatus log; MotorLog_GetStatus(&log);
+    if (log.state == MOTOR_LOG_REPLAYING) {
+        unsigned commas = 0;
+        for (unsigned i = 0; i < length; ++i) { if (text[i] == ',') ++commas; assert(text[i] != ':'); }
+        assert(commas == 7 && text[length-1] == '\n');
+        assert(frame_count < sizeof(frame_times) / sizeof(frame_times[0]));
+        frame_times[frame_count++] = tick;
+    }
     return USB_SERIAL_OK;
 }
 UsbSerialResult UsbSerial_Send(const void *data, uint16_t length)
@@ -140,8 +156,15 @@ static void step(void)
     ++tick;
     for (unsigned i = 0; i < 4; ++i)
         if (online_mask & (1U << i)) { motors.last_feedback_ms[i] = tick; motors.received_mask |= 1U << i; }
-    if (send_rc) { rc.last_valid_ms = tick; MotorLog_OnRcFrame(&rc); }
-    if (publish_target) Chassis_SetTargetWheelRpm(target);
+    if (send_rc) rc.last_valid_ms = tick;
+    if (publish_target) {
+        debug.input.now_ms = tick;
+        debug.running_mask = running_mask;
+        for (unsigned i = 0; i < 4; ++i) {
+            debug.wheel[i].control.target = target[i] * (6.283185307179586f / 60.0f);
+            debug.wheel[i].control.state = (running_mask & (1U << i)) ? MOTOR_DEBUG_RUNNING : MOTOR_DEBUG_WAIT_OFF;
+        }
+    }
     service_step();
     MotorLog_Process(tick); FlashTest_Process(); usb_step();
 }
@@ -156,6 +179,8 @@ static void boot(void)
 {
     memset(nor, 0xFF, sizeof(nor));
     rc.received = rc.valid = true;
+    rc.switch_a = -1;
+    debug.active_mask = 15;
     FlashTasks_Create(); FlashTasks_UsbSession(usb_session, true);
 }
 static void put32(uint32_t address, uint32_t value)
@@ -163,13 +188,15 @@ static void put32(uint32_t address, uint32_t value)
 static uint32_t get32(uint32_t address)
 { return (uint32_t)nor[address] | ((uint32_t)nor[address+1]<<8) | ((uint32_t)nor[address+2]<<16) | ((uint32_t)nor[address+3]<<24); }
 static int16_t raw_at(uint32_t record, unsigned motor)
-{ uint32_t a = FLASH_LOG_DATA_BASE + record * 8 + motor * 2; return (int16_t)((uint16_t)nor[a] | ((uint16_t)nor[a+1]<<8)); }
+{ uint32_t a = FLASH_LOG_DATA_BASE + record * 32 + 16 + motor * 2; return (int16_t)((uint16_t)nor[a] | ((uint16_t)nor[a+1]<<8)); }
+static int32_t target_at(uint32_t record, unsigned motor)
+{ return (int32_t)get32(FLASH_LOG_DATA_BASE + record * 32 + motor * 4); }
 static void seed_log(uint32_t marker)
 {
-    put32(FLASH_LOG_META_BASE, 0x31474C4D); put32(FLASH_LOG_META_BASE+4, 20);
+    put32(FLASH_LOG_META_BASE, 0x32474C4D); put32(FLASH_LOG_META_BASE+4, MOTOR_LOG_PERIOD_MS);
     put32(FLASH_LOG_META_BASE+8, 2); put32(FLASH_LOG_META_BASE+12, 0);
-    put32(FLASH_LOG_META_BASE+16, marker); put32(FLASH_LOG_META_BASE+20, 8);
-    memset(nor + FLASH_LOG_DATA_BASE, 0, 16);
+    put32(FLASH_LOG_META_BASE+16, marker); put32(FLASH_LOG_META_BASE+20, 32);
+    memset(nor + FLASH_LOG_DATA_BASE, 0, 64);
 }
 static void finish_test(void)
 {
@@ -180,9 +207,10 @@ static void finish_test(void)
 static void capture(unsigned milliseconds)
 {
     until(MOTOR_LOG_READY, 2000);
-    rc.rocker_l_h = 300; run(milliseconds);
+    target[0] = 100; target[1] = -200; target[2] = 300; target[3] = -400;
+    run(milliseconds);
     assert(log_status().state == MOTOR_LOG_RECORDING);
-    rc.rocker_l_h = 0; step();
+    memset(target, 0, sizeof(target)); step();
     until(MOTOR_LOG_WAIT_READ, 2000);
 }
 
@@ -230,13 +258,16 @@ int main(int argc, char **argv)
         motors.rotor_rpm[0] = 3591; motors.rotor_rpm[1] = -3591;
         motors.rotor_rpm[2] = 7182; motors.rotor_rpm[3] = 3591;
         motors.reversed = 1; online_mask = 7;
-        capture(11001);
+        capture(5501);
         uint32_t n = log_status().records;
         assert(n == 551 && log_status().stop_reason == 1 && !log_status().reached);
         assert(raw_at(0, 0) == 3591 && raw_at(0, 1) == -3591 && raw_at(n-1, 3) == 0);
+        assert(target_at(0, 0) == 100000 && target_at(0, 1) == -200000 && target_at(0, 3) == -400000);
         assert(get32(FLASH_LOG_META_BASE+8) == n);
+        assert(get32(FLASH_LOG_META_BASE+4) == 10 && log_status().period_ms == 10);
         /* 修改 Flash 首条而不改采样 RAM；回放必须反映此修改。 */
-        nor[FLASH_LOG_DATA_BASE] = 0x0E; nor[FLASH_LOG_DATA_BASE+1] = 0x1C; /* 7182 */
+        nor[FLASH_LOG_DATA_BASE+16] = 0x0E; nor[FLASH_LOG_DATA_BASE+17] = 0x1C; /* 7182 */
+        put32(FLASH_LOG_DATA_BASE, (uint32_t)-250000); /* 历史目标也必须重新读 Flash。 */
         sent_length = frame_count = 0; usb_hold = true; input("re"); input("ad\n"); run(100);
         assert(usb_length && log_status().state == MOTOR_LOG_REPLAYING);
         assert(raw_at(0, 0) == 7182); usb_hold = false;
@@ -245,20 +276,22 @@ int main(int argc, char **argv)
         assert(log_status().state == MOTOR_LOG_REPLAYING && get32(FLASH_LOG_META_BASE+16) == 0xFFFFFFFC);
         assert(raw_at(0, 0) == 7182); /* 最后一帧已入队但未完成，仍必须保留 Flash。 */
         usb_hold = false; until(MOTOR_LOG_READY, 3000);
-        const char *first = "speed:-374.000,-187.000,374.000,0.000\n";
+        const char *first = "-250.000,-374.000,-200.000,-187.000,300.000,374.000,-400.000,0.000\n";
         assert(frame_count == n && !strncmp((char *)sent, first, strlen(first)));
-        for (unsigned i = 1; i < frame_count; ++i) assert((uint32_t)(frame_times[i]-frame_times[i-1]) >= 20);
-        for (unsigned i = FLASH_LOG_META_BASE; i < FLASH_LOG_DATA_BASE + 8192; ++i) assert(nor[i] == 0xFF);
+        for (unsigned i = 1; i < frame_count; ++i) assert((uint32_t)(frame_times[i]-frame_times[i-1]) >= 10);
+        for (unsigned i = FLASH_LOG_META_BASE; i < FLASH_LOG_DATA_BASE + ((n*32+4095)/4096)*4096; ++i) assert(nor[i] == 0xFF);
     }
     else if (!strcmp(scenario, "dynamic"))
     {
-        until(MOTOR_LOG_READY, 2000); publish_target = 1;
-        for (unsigned i = 0; i < 4; ++i) target[i] = 187;
-        rc.rocker_l_v = 200; step(); uint32_t start = tick; run(99);
-        for (unsigned i = 0; i < 4; ++i) { target[i] = 374; motors.rotor_rpm[i] = 3591; }
+        until(MOTOR_LOG_READY, 2000);
+        const float first[4] = {187, -187, 374, -374}, next[4] = {374, -374, 187, -187};
+        const int16_t first_raw[4] = {3591, -3591, 7182, -7182}, next_raw[4] = {7182, -7182, 3591, -3591};
+        memcpy(target, first, sizeof(target));
+        step(); uint32_t start = tick; run(99);
+        for (unsigned i = 0; i < 4; ++i) { target[i] = next[i]; motors.rotor_rpm[i] = first_raw[i]; }
         run(120); assert(!log_status().reached); /* 达到首帧的旧目标不触发。 */
         online_mask = 7; motors.received_mask &= 7;
-        for (unsigned i = 0; i < 4; ++i) motors.rotor_rpm[i] = 7182;
+        memcpy(motors.rotor_rpm, next_raw, sizeof(next_raw));
         run(120); assert(!log_status().reached); /* 离线第四台绝不能参与达标。 */
         online_mask = 15;
         unsigned limit = 100; while (!log_status().reached && limit--) step();
@@ -270,14 +303,28 @@ int main(int argc, char **argv)
         step(); assert(log_status().state == MOTOR_LOG_FLUSHING && tick - hit == 5000);
         assert(tick - start >= 5000);
         until(MOTOR_LOG_WAIT_READ, 1000); assert(log_status().stop_reason == 2);
+        assert(target_at(0, 0) == 187000 && target_at(0, 1) == -187000 && target_at(0, 2) == 374000);
+        assert(target_at(10, 0) == 374000 && target_at(10, 2) == 187000);
+        input("read\n"); until(MOTOR_LOG_READY, 10000); run(200);
+        assert(log_status().state == MOTOR_LOG_READY); /* 持续非零目标不能自动重录。 */
+        memset(target, 0, sizeof(target)); step(); target[2] = -50; step();
+        assert(log_status().state == MOTOR_LOG_RECORDING); /* 负目标重新触发。 */
     }
-    else if (!strcmp(scenario, "no_target"))
+    else if (!strcmp(scenario, "start_conditions"))
     {
-        until(MOTOR_LOG_READY, 2000); rc.rocker_l_h = 1; run(6100);
-        assert(log_status().state == MOTOR_LOG_RECORDING && !log_status().reached);
-        float invalid[4] = {NAN, 0, 0, 0}; Chassis_SetTargetWheelRpm(invalid);
-        run(25); assert(!log_status().target_valid);
-        rc.rocker_l_h = 0; step(); until(MOTOR_LOG_WAIT_READ, 1000);
+        until(MOTOR_LOG_READY, 2000); rc.rocker_l_h = rc.rocker_l_v = 300; run(30);
+        assert(log_status().state == MOTOR_LOG_READY); /* 摇杆边沿不再触发。 */
+        target[0] = NAN; run(25); assert(!log_status().target_valid && log_status().state == MOTOR_LOG_READY);
+        target[0] = 0; target[3] = -100; running_mask = 7; run(25);
+        assert(log_status().state == MOTOR_LOG_READY);
+        running_mask = 15; debug.active_mask = 7; run(25); assert(log_status().state == MOTOR_LOG_READY);
+        debug.active_mask = 15; rc.switch_a = 1; run(25); assert(log_status().state == MOTOR_LOG_READY);
+        rc.switch_a = -1; rc.valid = false; run(25); assert(log_status().state == MOTOR_LOG_READY);
+        rc.valid = true; rc.rocker_l_h = rc.rocker_l_v = 0; step();
+        assert(log_status().state == MOTOR_LOG_RECORDING); /* 任意一台负目标；摇杆保持零。 */
+        run(6100); assert(log_status().state == MOTOR_LOG_RECORDING && !log_status().reached);
+        target[3] = 0; step(); until(MOTOR_LOG_WAIT_READ, 1000);
+        assert(log_status().stop_reason == 1 && target_at(0, 3) == -100000);
     }
     else if (!strcmp(scenario, "reconnect"))
     {
@@ -310,25 +357,109 @@ int main(int argc, char **argv)
     {
         seed_log(0xFFFFFFFE); until(MOTOR_LOG_ERROR, 100);
         assert(log_status().error == 101 && erase_count[2] == 0);
-        input("clear\n"); until(MOTOR_LOG_READY, 3000);
+        input("clear\n"); until(MOTOR_LOG_READY, 5000);
         for (unsigned i = 4096; i < sizeof(nor); ++i) assert(nor[i] == 0xFF);
     }
     else if (!strcmp(scenario, "full"))
     {
-        until(MOTOR_LOG_READY, 2000); rc.rocker_l_h = 100;
-        run(42000); until(MOTOR_LOG_WAIT_READ, 1000);
-        assert(log_status().records == (FLASH_LOG_END-FLASH_LOG_DATA_BASE)/8 && log_status().stop_reason == 4);
+        until(MOTOR_LOG_READY, 2000); target[0] = 100;
+        run(21000); until(MOTOR_LOG_WAIT_READ, 1000);
+        assert(log_status().records == (FLASH_LOG_END-FLASH_LOG_DATA_BASE)/32 && log_status().stop_reason == 4);
     }
     else if (!strcmp(scenario, "rc_loss"))
     {
-        until(MOTOR_LOG_READY, 2000); rc.rocker_l_h = 100; run(100);
+        until(MOTOR_LOG_READY, 2000); target[0] = 100; run(100);
         send_rc = 0; run(110); until(MOTOR_LOG_WAIT_READ, 1000);
         assert(log_status().stop_reason == 3);
     }
     else if (!strcmp(scenario, "late"))
     {
-        until(MOTOR_LOG_READY, 2000); rc.rocker_l_h = 100; run(10);
+        until(MOTOR_LOG_READY, 2000); target[0] = 100; run(10);
         tick += 40; step(); until(MOTOR_LOG_WAIT_READ, 1000); assert(log_status().stop_reason == 6);
+    }
+    else if (!strcmp(scenario, "nonzero_boot"))
+    {
+        target[1] = -100; until(MOTOR_LOG_RECORDING, 2000);
+        assert(rc.rocker_l_v == 0 && rc.rocker_l_h == 0);
+    }
+    else if (!strcmp(scenario, "local_fault"))
+    {
+        until(MOTOR_LOG_READY, 2000);
+        for (unsigned i = 0; i < 4; ++i) { target[i] = 374; motors.rotor_rpm[i] = 3591; }
+        step(); online_mask = running_mask = 7; target[3] = 0;
+        run(99); assert(log_status().state == MOTOR_LOG_RECORDING);
+        run(61); memset(target, 0, sizeof(target)); step(); until(MOTOR_LOG_WAIT_READ, 1000);
+        assert(raw_at(9, 3) == 3591 && raw_at(10, 3) == 0); /* 90ms 有效，100ms 离线。 */
+        assert(target_at(1, 3) == 0 && !log_status().reached && log_status().stop_reason == 1);
+    }
+    else if (!strcmp(scenario, "fault_not_reached"))
+    {
+        until(MOTOR_LOG_READY, 2000); for (unsigned i=0;i<4;++i) target[i]=374;
+        step(); running_mask=7; target[3]=0;
+        for(unsigned i=0;i<3;++i) { target[i]=187; motors.rotor_rpm[i]=3591; }
+        run(6100); assert(log_status().state == MOTOR_LOG_RECORDING && !log_status().reached);
+    }
+    else if (!strcmp(scenario, "control_stale") || !strcmp(scenario, "switch_off") ||
+             !strcmp(scenario, "all_stopped") || !strcmp(scenario, "invalid_target"))
+    {
+        until(MOTOR_LOG_READY, 2000); target[0]=100; run(100);
+        unsigned reason;
+        if (!strcmp(scenario,"control_stale")) { publish_target=0; reason=7; }
+        else if (!strcmp(scenario,"switch_off")) { rc.switch_a=0; reason=8; }
+        else if (!strcmp(scenario,"all_stopped")) { running_mask=0; reason=9; }
+        else { target[2]=INFINITY; reason=10; }
+        run(110); until(MOTOR_LOG_WAIT_READ,1000); assert(log_status().stop_reason==reason);
+    }
+    else if (!strcmp(scenario, "overflow"))
+    {
+        until(MOTOR_LOG_READY,2000); service_hold=true; target[0]=100; run(5200);
+        assert(log_status().state==MOTOR_LOG_FLUSHING && log_status().stop_reason==5);
+        service_hold=false; until(MOTOR_LOG_WAIT_READ,3000); assert(log_status().records==256);
+    }
+    else if (!strcmp(scenario, "legacy"))
+    {
+        seed_log(0xFFFFFFFC); put32(FLASH_LOG_META_BASE,0x31474C4D); put32(FLASH_LOG_META_BASE+20,8);
+        until(MOTOR_LOG_ERROR,100); assert(log_status().error==103 && erase_count[2]==0);
+        assert(!MotorLog_RequestRead()); input("clear\n"); until(MOTOR_LOG_READY,5000);
+        for(unsigned i=4096;i<sizeof(nor);++i) assert(nor[i]==0xFF);
+    }
+    else if (!strcmp(scenario, "erase_recovery"))
+    {
+        seed_log(0xFFFFFFF8); until(MOTOR_LOG_READY,2000);
+        assert(erase_count[1]==1 && erase_count[2]==1 && frame_count==0);
+    }
+    else if (!strcmp(scenario, "cadence100"))
+    {
+        capture(10000);
+        assert(log_status().records == 1000 && log_status().period_ms == 10);
+        input("status\n"); run(5); assert(strstr((char *)sent,"period_ms=10\n"));
+        sent_length=frame_count=0; input("read\n"); until(MOTOR_LOG_READY,15000);
+        assert(frame_count == 1000);
+        for(unsigned i=1;i<frame_count;++i) assert(frame_times[i]-frame_times[i-1] == 10);
+    }
+    else if (!strcmp(scenario, "old_period") || !strcmp(scenario, "old_erase_recovery"))
+    {
+        bool erasing = !strcmp(scenario,"old_erase_recovery");
+        seed_log(erasing ? 0xFFFFFFF8 : 0xFFFFFFFC); put32(FLASH_LOG_META_BASE+4,20);
+        if(erasing) {
+            until(MOTOR_LOG_ERASING,100); assert(log_status().period_ms==20);
+        } else {
+            until(MOTOR_LOG_WAIT_READ,100); assert(log_status().period_ms==20);
+            input("status\n"); run(5); assert(strstr((char *)sent,"period_ms=20\n"));
+            input("read\n"); until(MOTOR_LOG_ERASING,100);
+            assert(frame_count==2 && frame_times[1]-frame_times[0]==20);
+            run(10); assert(get32(FLASH_LOG_META_BASE+16)==0xFFFFFFF8);
+            assert(get32(FLASH_LOG_META_BASE+4)==20); /* 标记擦除不会把 20 改写为 10。 */
+        }
+        until(MOTOR_LOG_READY,2000);
+        assert(log_status().period_ms==10 && log_status().error==0);
+        target[0]=-100; run(101); memset(target,0,sizeof(target)); step(); until(MOTOR_LOG_WAIT_READ,1000);
+        assert(log_status().records==11 && get32(FLASH_LOG_META_BASE+4)==10);
+    }
+    else if (!strcmp(scenario, "bad_period"))
+    {
+        seed_log(0xFFFFFFFC); put32(FLASH_LOG_META_BASE+4,0);
+        until(MOTOR_LOG_ERROR,100); assert(log_status().error==100 && erase_count[2]==0);
     }
     else assert(!"unknown scenario");
     printf("PASS: Flash app %s (test=%d log=%d)\n", scenario, FLASH_TEST_TASK_ENABLE, MOTOR_SPEED_LOG_TASK_ENABLE);

@@ -109,13 +109,13 @@ static void dispatch_line(void)
     {
         MotorLogStatus log;
         MotorLog_GetStatus(&log);
-        char message[160];
+        char message[192];
         int n = snprintf(message, sizeof(message),
-            "FLASH state=%u error=%u; TEST state=%lu error=%lu; LOG state=%u records=%lu error=%lu stop=%lu target=%u reached=%u\n",
+            "FLASH state=%u error=%u; TEST state=%lu error=%lu; LOG state=%u records=%lu error=%lu stop=%lu target=%u reached=%u period_ms=%lu\n",
             (unsigned)FlashService_GetState(), (unsigned)FlashService_GetError(),
             (unsigned long)FlashTest_State(), (unsigned long)FlashTest_Error(),
             (unsigned)log.state, (unsigned long)log.records, (unsigned long)log.error,
-            (unsigned long)log.stop_reason, (unsigned)log.target_valid, (unsigned)log.reached);
+            (unsigned long)log.stop_reason, (unsigned)log.target_valid, (unsigned)log.reached, (unsigned long)log.period_ms);
         if (n > 0 && (unsigned)n < sizeof(message)) FlashTasks_Reply(message);
     }
     else FlashTasks_Reply("COMMANDS flash:<data>, read, status, clear, motor_status; end with LF\n");

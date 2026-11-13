@@ -37,7 +37,7 @@ UsbSerialResult UsbSerial_SendTracked(const void *data,uint16_t n,UsbSerialTxTic
         assert(report_len+n<sizeof(report)); memcpy(report+report_len,data,n); report_len+=n; report[report_len]=0;
     } else {
         unsigned commas=0; for(unsigned i=0;i<n;++i)if(last[i]==',')++commas;
-        assert(commas==4 && last[n-1]=='\n' && !strchr(last,':') && !strchr(last,'=')); ++frames;
+        assert(commas==8 && last[n-1]=='\n' && !strchr(last,':') && !strchr(last,'=')); ++frames;
     }
     ++sends; ticket->session_id=usb.session_id; ticket->end_bytes=sends;
     usb.tx_buffered=n; completion=USB_TX_PENDING; return USB_SERIAL_OK;
@@ -58,17 +58,22 @@ int main(void)
     sample.debug.wheel[0].input.speed=-218.5f*6.283185307179586f/60;
     sample.debug.wheel[1].input.speed=220.2f*6.283185307179586f/60;
     sample.debug.wheel[2].input.speed=0;
+    sample.debug.wheel[0].input.measured_current=0.398f;
+    sample.debug.wheel[1].input.measured_current=-0.750f;
+    sample.debug.wheel[2].input.measured_current=1.250f;
+    sample.debug.wheel[3].input.measured_current=9.5f; /* 未收到反馈，不能回传陈旧电流。 */
+    for(unsigned i=0;i<4;++i) sample.debug.wheel[i].control.command_raw=8192; /* 指令 10A 与反馈不同。 */
     for(unsigned i=0;i<3;++i)sample.debug.wheel[i].input.motor_received=true;
     sample.motors.received_mask=7;
     process(999); assert(!sends);
     sample.debug.running_mask=5; sample.debug.run_id=1;
-    process(1000); assert(!sends); /* No ready, wait 20ms. */
+    process(1000); assert(!sends); /* No ready, wait 5ms. */
     for(unsigned i=1001;i<=2000;++i){process(i);complete();}
-    assert(frames==50);
-    assert(!strcmp(last,"225.000,-218.500,220.200,0.000,0.000\n"));
+    assert(frames==200);
+    assert(!strcmp(last,"225.000,-218.500,220.200,0.000,0.000,0.398,-0.750,1.250,0.000\n"));
     freeze_first=true; process(2099); complete();
     assert(strstr(last,"-218.500"));
-    process(2119); complete(); assert(!strcmp(last,"225.000,0.000,220.200,0.000,0.000\n"));
+    process(2119); complete(); assert(!strcmp(last,"225.000,0.000,220.200,0.000,0.000,0.000,-0.750,1.250,0.000\n"));
     freeze_first=false;
     busy=true; process(2140); unsigned before=frames;
     busy=false; process(2141); assert(frames==before);
@@ -93,7 +98,22 @@ int main(void)
     sample.debug.running_mask=1; ++sample.debug.run_id; process(2800); process(2820); complete();
     assert(frames==before+1);
     usb.ready=false; process(2821); usb.ready=true; ++usb.session_id; process(3000);
-    before=frames; process(3019); assert(frames==before); process(3020); complete(); assert(frames==before+1);
-    puts("PASS: four-mode five-column CSV, no ready, 50Hz, offline zero, backpressure/reconnect and complete multi-packet diagnostics.");
+    before=frames; process(3004); assert(frames==before); process(3005); complete(); assert(frames==before+1);
+    sample.debug.wheel[3].input.motor_received=true;
+    sample.debug.wheel[3].input.feedback_ms=3010;
+    sample.debug.wheel[3].input.speed=-100.0f*6.283185307179586f/60;
+    sample.debug.wheel[3].input.measured_current=-2.5f;
+    process(3010); complete();
+    assert(!strcmp(last,"225.000,-218.500,220.200,0.000,-100.000,0.398,-0.750,1.250,-2.500\n"));
+    assert(strlen(last)>64); /* 完整一行可跨 USB FS 包。 */
+    sample.debug.common_target=-999999.0f*6.283185307179586f/60;
+    for(unsigned i=0;i<4;++i) {
+        sample.debug.wheel[i].input.speed=-999999.0f*6.283185307179586f/60;
+        sample.debug.wheel[i].input.measured_current=-999999.0f;
+    }
+    sample.debug.wheel[3].input.feedback_ms=3015;
+    before=frames; process(3015); complete();
+    assert(frames==before+1 && strlen(last)>96 && strlen(last)<128); /* 格式器允许范围内的最长九列。 */
+    puts("PASS: four-mode nine-column CSV, signed feedback currents, no ready, 200Hz, offline zero, long frames, backpressure/reconnect and complete diagnostics.");
     return 0;
 }

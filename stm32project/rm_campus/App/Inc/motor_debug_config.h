@@ -20,22 +20,22 @@
 #define MOTOR_DEBUG_M1_KI 0.1f
 #endif
 #ifndef MOTOR_DEBUG_M2_KP
-#define MOTOR_DEBUG_M2_KP 0.05f
+#define MOTOR_DEBUG_M2_KP 3.0f
 #endif
 #ifndef MOTOR_DEBUG_M2_KI
-#define MOTOR_DEBUG_M2_KI 0.0f
+#define MOTOR_DEBUG_M2_KI 0.08f
 #endif
 #ifndef MOTOR_DEBUG_M3_KP
-#define MOTOR_DEBUG_M3_KP 0.05f
+#define MOTOR_DEBUG_M3_KP 3.0f
 #endif
 #ifndef MOTOR_DEBUG_M3_KI
-#define MOTOR_DEBUG_M3_KI 0.0f
+#define MOTOR_DEBUG_M3_KI 0.12f
 #endif
 #ifndef MOTOR_DEBUG_M4_KP
-#define MOTOR_DEBUG_M4_KP 0.05f
+#define MOTOR_DEBUG_M4_KP 3.0f
 #endif
 #ifndef MOTOR_DEBUG_M4_KI
-#define MOTOR_DEBUG_M4_KI 0.0f
+#define MOTOR_DEBUG_M4_KI 0.1f
 #endif
 /* 临时禁用软件 CAN_FAULT 停机；置 1 并重新编译恢复。硬件 Bus-Off 不受此开关影响。 */
 #ifndef MOTOR_DEBUG_CAN_FAULT_ENABLE
@@ -72,13 +72,13 @@
 #endif
 #endif
 #define MOTOR_DEBUG_RPM_TO_RAD_S(rpm) ((rpm) * (6.283185307179586f / 60.0f))
-#define MOTOR_DEBUG_MAX_SPEED MOTOR_DEBUG_RPM_TO_RAD_S(450.0f)
-#define MOTOR_DEBUG_CURRENT_LIMIT 15.0f
-#define MOTOR_DEBUG_INTEGRAL_LIMIT 0.50f
+#define MOTOR_DEBUG_MAX_SPEED MOTOR_DEBUG_RPM_TO_RAD_S(400.0f)
+#define MOTOR_DEBUG_CURRENT_LIMIT 9.5f
+#define MOTOR_DEBUG_INTEGRAL_LIMIT 1.50f
 #ifndef MOTOR_DEBUG_TELEMETRY
 #define MOTOR_DEBUG_TELEMETRY 1
 #endif
-#define MOTOR_DEBUG_TELEMETRY_PERIOD_MS 20U
+#define MOTOR_DEBUG_TELEMETRY_PERIOD_MS 5U
 /* CH7 最左拨杆：+1 关闭确认，-1 启用。CH2 左摇杆竖直。 */
 #define MOTOR_DEBUG_STICK_DEADBAND 40 /* 仅启用前回中判定；运行时无死区重映射。 */
 #define MOTOR_DEBUG_ARM_HOLD_MS 300U
