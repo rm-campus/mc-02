@@ -79,6 +79,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/w25q64.c
     App/Src/campus_app.c
     App/Src/motor_debug.c
+    App/Src/mecanum.c
     App/Src/motor_debug_usb.c
     App/Src/motor_status_usb.c
     App/Src/usb_app.c

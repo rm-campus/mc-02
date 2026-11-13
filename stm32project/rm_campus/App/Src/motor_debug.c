@@ -28,6 +28,8 @@ MotorDebugConfig MotorDebug_DefaultConfig(void)
 
 MotorDebugConfig MotorDebug_WheelConfig(uint8_t motor_id)
 {
+    /* M1～M4 对应 C620 ID 1～4。CH8 切换目标算法时，每台电机继续使用
+     * 自己的 Kp、Ki 和积分状态。轮位与 ID 的对应关系在麦轮解算中处理。 */
     static const float kp[4] = {MOTOR_DEBUG_M1_KP, MOTOR_DEBUG_M2_KP, MOTOR_DEBUG_M3_KP, MOTOR_DEBUG_M4_KP};
     static const float ki[4] = {MOTOR_DEBUG_M1_KI, MOTOR_DEBUG_M2_KI, MOTOR_DEBUG_M3_KI, MOTOR_DEBUG_M4_KI};
     MotorDebugConfig c = MotorDebug_DefaultConfig();
@@ -91,6 +93,8 @@ void MotorDebug_Step(MotorDebug *d, const MotorDebugConfig *c, const MotorDebugI
 #if MOTOR_DEBUG_CAN_FAULT_ENABLE
     else if (!in->can_ok) reason = MOTOR_DEBUG_CAN_FAULT;
 #endif
+    /* 无符号毫秒差可跨 tick 回绕。帧龄恰好到超时阈值就失效，
+     * 控制周期则允许等于 max_period_ms，零间隔或更长的间隔才判故障。 */
     else if (!in->rc_received || !in->rc_valid ||
              (uint32_t)(in->now_ms - in->rc_ms) >= c->rc_timeout_ms ||
              in->stick < -660 || in->stick > 660 ||
@@ -120,7 +124,8 @@ void MotorDebug_Step(MotorDebug *d, const MotorDebugConfig *c, const MotorDebugI
     }
     if (!d->off_seen) return;
     if (d->state != MOTOR_DEBUG_RUNNING) {
-        if (in->stick < -c->deadband || in->stick > c->deadband) {
+        if (in->stick < -c->deadband || in->stick > c->deadband ||
+            in->lateral_stick < -c->deadband || in->lateral_stick > c->deadband) {
             d->centering = false;
             return;
         }
@@ -136,10 +141,9 @@ void MotorDebug_Step(MotorDebug *d, const MotorDebugConfig *c, const MotorDebugI
         }
         d->state = MOTOR_DEBUG_RUNNING;
     }
-    /* 运行时保持严格线性；deadband 仅用于启用前的回中判定。 */
-    d->target = (float)in->stick * (c->max_speed / 660.0f);
+    d->target = in->target_rad_s;
     const float dt = (float)in->period_ms * 0.001f;
-    d->reference = d->target;
+    d->reference = d->target; /* 目标直接进入速度环；运行中回中时，PI 仍可输出制动电流。 */
     const float error = d->reference - in->speed;
     const float proportional = c->kp * error;
     const float candidate = clampf(d->integral_a + c->ki * error * dt,

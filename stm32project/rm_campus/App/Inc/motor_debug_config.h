@@ -6,6 +6,14 @@
 #endif
 #define MOTOR_DEBUG_MODE_SINGLE 0
 #define MOTOR_DEBUG_MODE_FOUR 1
+/* X 型轮组，以下是待标定的安装值。四个轮位各填一个不同的 C620 ID（1～4）。 */
+#define MECANUM_FRONT_LEFT_ID  1
+#define MECANUM_FRONT_RIGHT_ID 2
+#define MECANUM_REAR_LEFT_ID   3
+#define MECANUM_REAR_RIGHT_ID  4
+#define MECANUM_FORWARD_SIGN   1 /* 推前时若 CH2 为负，填 -1。 */
+#define MECANUM_RIGHT_SIGN     1 /* 推右时若 CH4 为负，填 -1。 */
+#define MOTOR_REVERSED_MASK    0U /* bit0～3 对应 ID1～4，由驱动统一修正控制与反馈。 */
 #ifndef MOTOR_DEBUG_MODE
 #define MOTOR_DEBUG_MODE MOTOR_DEBUG_MODE_FOUR
 #endif
@@ -80,7 +88,7 @@
 #endif
 #define MOTOR_DEBUG_TELEMETRY_PERIOD_MS 5U
 /* CH7 最左拨杆：+1 关闭确认，-1 启用。CH2 左摇杆竖直。 */
-#define MOTOR_DEBUG_STICK_DEADBAND 40 /* 仅启用前回中判定；运行时无死区重映射。 */
+#define MOTOR_DEBUG_STICK_DEADBAND 40 /* 启用前回中；麦轮平移时两个轴各自过死区。 */
 #define MOTOR_DEBUG_ARM_HOLD_MS 300U
 #define MOTOR_DEBUG_RC_TIMEOUT_MS 100U
 #define MOTOR_DEBUG_FEEDBACK_TIMEOUT_MS 100U

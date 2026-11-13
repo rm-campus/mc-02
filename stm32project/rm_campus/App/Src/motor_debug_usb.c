@@ -70,7 +70,7 @@ void MotorDebugUsb_Process(void)
         s_announced = false;
         s_pending = false;
 #if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
-        s_announced = true; /* 四轮只发九通道数字，不发送 ready。 */
+        s_announced = true; /* 四轮直接发送 CSV。 */
         s_last_ms = d.input.now_ms;
 #endif
     }
@@ -98,12 +98,16 @@ void MotorDebugUsb_Process(void)
     s_last_ms = d.input.now_ms; /* 不追赶补发；下一帧使用最新快照。 */
     if (usb.tx_buffered != 0U) return;
 #if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
-    int values[9] = {milli(d.common_target * (60.0f / 6.283185307179586f))};
+    const unsigned targets = d.mecanum_mode ? 4U : 1U;
+    const unsigned channels = targets + 8U;
+    int values[12];
+    values[0] = milli(d.common_target * (60.0f / 6.283185307179586f));
     for (unsigned i = 0; i < 4U; ++i) {
         const MotorDebugInput *in = &d.wheel[i].input;
         bool online = in->motor_received && (uint32_t)(d.input.now_ms - in->feedback_ms) < MOTOR_DEBUG_FEEDBACK_TIMEOUT_MS;
-        values[i+1U] = online ? milli(in->speed * (60.0f / 6.283185307179586f)) : 0;
-        values[i+5U] = online ? milli(in->measured_current) : 0; /* C620 反馈电流，单位 A。 */
+        if (d.mecanum_mode) values[i] = milli(in->target_rad_s * (60.0f / 6.283185307179586f));
+        values[targets+i] = online ? milli(in->speed * (60.0f / 6.283185307179586f)) : 0;
+        values[targets+4U+i] = online ? milli(in->measured_current) : 0;
     }
 #else
     int values[4] = {
@@ -112,9 +116,9 @@ void MotorDebugUsb_Process(void)
         milli((float)d.control.command_raw * (20.0f / 16384.0f)),
         milli(d.input.measured_current)
     };
-#endif
     const unsigned channels = sizeof(values) / sizeof(values[0]);
-    char frame[128]; /* 九列均可完整容纳；USB 按 LF 分帧，不依赖 64 字节包边界。 */
+#endif
+    char frame[160]; /* 最多十二列，LF 分帧。 */
     unsigned used = 0U;
     for (unsigned i = 0; i < channels; ++i) {
         unsigned magnitude = (unsigned)(values[i] < 0 ? -values[i] : values[i]);

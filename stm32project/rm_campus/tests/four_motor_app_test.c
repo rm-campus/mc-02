@@ -4,6 +4,7 @@
 #include "can.h"
 #include "task.h"
 #include <assert.h>
+#include <math.h>
 #include <setjmp.h>
 #include <stdio.h>
 #include <string.h>
@@ -61,11 +62,38 @@ void Fxi6x_CopyData(Fxi6x_Data *rc)
     *rc=(Fxi6x_Data){.received=true,.valid=!(scenario==6 && now>=900 && now<910),.last_valid_ms=now,
         .switch_a=(now<5 || (now>=1200 && now<1205))?1:-1,
         .rocker_l_v=((now>400 && now<1200) || now>=1510)?330:0,.rocker_r_v=-660};
+    if (scenario==8 && now<1200) {
+        rc->switch_b = now>=900 ? FXI6X_HIGH : FXI6X_LOW;
+        rc->rocker_l_v = 0;
+        rc->rocker_l_h = now<350 ? 41 : 0; /* CH4 单独偏移也会阻止启用。 */
+        if (now>=700) {
+            rc->rocker_l_h = 350;
+            if (now>=750) rc->rocker_l_v = 350;
+            if (now>=800) rc->rocker_l_h = -40;
+            if (now>=850 && now<900) rc->rocker_l_h = -660;
+        }
+    }
 }
 TickType_t xTaskGetTickCount(void) { return now; }
 void vTaskDelayUntil(TickType_t *wake,TickType_t delta)
 {
     *wake+=delta; now=*wake;
+    if (scenario==8 && MOTOR_DEBUG_ENABLE && now<=901) {
+        CampusMotorDebugSnapshot d; Campus_CopyMotorDebug(&d);
+        assert(d.mecanum_mode==(now<=900));
+        if (now==600) assert(!d.running_mask);
+        if (now>=701) {
+            const float half=MOTOR_DEBUG_MAX_SPEED*0.5f;
+            float plus=half, minus=-half;
+            if (now>750) { plus=2*half; minus=0; }
+            if (now>800) { plus=minus=half; }
+            if (now>850) { plus=-2*half/3; minus=2*half; }
+            if (now>900) { plus=minus=MOTOR_DEBUG_MAX_SPEED*350/660; }
+            assert(d.running_mask==15);
+            for (unsigned i=0;i<4;++i)
+                assert(fabsf(d.wheel[i].control.target-((i==0 || i==3)?plus:minus))<0.001f);
+        }
+    }
     if(now==949 || now==948 || now==1199) {
         CampusMotorDebugSnapshot d; Campus_CopyMotorDebug(&d);
         if(MOTOR_DEBUG_ENABLE && scenario==1) {
@@ -86,7 +114,7 @@ bool Led_Init(void) { return true; }
 bool Led_SetRGB(uint8_t a,uint8_t b,uint8_t c) { (void)a;(void)b;(void)c;return true; }
 int main(void)
 {
-    for(scenario=0;scenario<8;++scenario) {
+    for(scenario=0;scenario<9;++scenario) {
         now=pending=tx_count=depth=0; Campus_Init();
         if(setjmp(done)==0) Campus_ChassisTask(NULL);
         CampusMotorDebugSnapshot d; Campus_CopyMotorDebug(&d);

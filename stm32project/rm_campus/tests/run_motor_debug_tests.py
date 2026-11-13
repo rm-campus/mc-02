@@ -119,7 +119,7 @@ def main():
                 "-DMOTOR_DEBUG_M1_KP=0.05f", "-DMOTOR_DEBUG_M2_KP=0.10f", "-DMOTOR_DEBUG_M3_KP=0.15f", "-DMOTOR_DEBUG_M4_KP=0.20f",
                 "-DMOTOR_DEBUG_M1_KI=0.0f", "-DMOTOR_DEBUG_M2_KI=0.01f", "-DMOTOR_DEBUG_M3_KI=0.02f", "-DMOTOR_DEBUG_M4_KI=0.03f",
                 *[str(root / p) for p in ["tests/four_motor_app_test.c", "App/Src/motor_debug.c",
-                    "App/Src/campus_app.c", "Bsp/Src/motor_3508.c"]], "-lm", "-o", str(exe)
+                    "App/Src/campus_app.c", "App/Src/mecanum.c", "Bsp/Src/motor_3508.c"]], "-lm", "-o", str(exe)
             ], check=True, timeout=30)
             subprocess.run([str(exe)], check=True, timeout=10)
         exe = folder / "four_usb.exe"

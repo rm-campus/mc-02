@@ -12,6 +12,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "motor_debug_config.h"
+#include "mecanum.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -85,7 +86,7 @@ void Campus_CopyMotorDebug(CampusMotorDebugSnapshot *out)
 /**
  * @brief 初始化四台 M3508 的软件状态并启动 CAN 接收。
  * @note 调用前必须完成 MX_FDCAN1_Init；对象必须先于接收中断初始化。
- * 方向掩码 0U 表示暂不反向；轮序和实际正方向尚待上板标定。
+ * MOTOR_REVERSED_MASK 按 C620 ID 修正电流与反馈方向，默认 0U；按实际安装标定。
  */
 void Campus_Init(void)
 {
@@ -96,7 +97,7 @@ void Campus_Init(void)
     s_motor_debug.motor_id = MOTOR_DEBUG_MOTOR_ID;
     MotorDebug_Init(&s_motor_debug.control);
     for (unsigned i = 0; i < 4U; ++i) MotorDebug_Init(&s_motor_debug.wheel[i].control);
-    Motor3508_Init(&s_motors, 0U);
+    Motor3508_Init(&s_motors, MOTOR_REVERSED_MASK);
     s_status.can_ready = Can_Init(&hfdcan1);
 }
 
@@ -239,6 +240,15 @@ void Campus_ChassisTask(void *argument)
         const uint8_t previous_running = frame.running_mask;
         frame.running_mask = 0U;
         frame.common_target = (float)rc.rocker_l_v * (base.max_speed / 660.0f);
+        float targets[4] = {frame.common_target, frame.common_target,
+                            frame.common_target, frame.common_target};
+#if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
+        /* CH8 每周期读取：-1 用平移目标，0/+1 用同速目标。使能仍由 CH7 决定。 */
+        frame.mecanum_mode = rc.switch_b == FXI6X_LOW;
+        if (frame.mecanum_mode) {
+            Mecanum_Translate(rc.rocker_l_v, rc.rocker_l_h, base.deadband, base.max_speed, targets);
+        }
+#endif
         for (uint8_t i = 0; i < 4U; ++i) {
             MotorDebugInput *input = &frame.wheel[i].input;
             *input = (MotorDebugInput){
@@ -248,11 +258,15 @@ void Campus_ChassisTask(void *argument)
                 .can_ok = can_ok, .rc_ms = rc.last_valid_ms,
                 .feedback_ms = motors.last_feedback_ms[i],
                 .enable_switch = rc.switch_a, .stick = rc.rocker_l_v,
+                .lateral_stick = frame.mecanum_mode ? rc.rocker_l_h : 0,
+                .target_rad_s = targets[i],
                 .speed = motors.velocity[i], .measured_current = motors.current[i],
                 .temperature = motors.temperature[i]
             };
             if ((active_mask & (1U << i)) != 0U)
                 MotorDebug_Step(&frame.wheel[i].control, &configs[i], input);
+            /* bit i 对应电调 ID i+1。总线恢复后，仅允许已有新反馈的活动轮使用 PI 输出；
+             * 其余槽位写零，循环结束后再把四个槽位打包到同一帧 0x200。 */
             int16_t command = (active_mask & recovery_mask & (1U << i)) != 0U ?
                 frame.wheel[i].control.command_raw : 0;
             Motor3508_SetCurrent(&s_motors, i, command);

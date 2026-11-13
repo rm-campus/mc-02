@@ -37,7 +37,7 @@ UsbSerialResult UsbSerial_SendTracked(const void *data,uint16_t n,UsbSerialTxTic
         assert(report_len+n<sizeof(report)); memcpy(report+report_len,data,n); report_len+=n; report[report_len]=0;
     } else {
         unsigned commas=0; for(unsigned i=0;i<n;++i)if(last[i]==',')++commas;
-        assert(commas==8 && last[n-1]=='\n' && !strchr(last,':') && !strchr(last,'=')); ++frames;
+        assert(commas==(sample.debug.mecanum_mode?11U:8U) && last[n-1]=='\n' && !strchr(last,':') && !strchr(last,'=')); ++frames;
     }
     ++sends; ticket->session_id=usb.session_id; ticket->end_bytes=sends;
     usb.tx_buffered=n; completion=USB_TX_PENDING; return USB_SERIAL_OK;
@@ -106,13 +106,19 @@ int main(void)
     process(3010); complete();
     assert(!strcmp(last,"225.000,-218.500,220.200,0.000,-100.000,0.398,-0.750,1.250,-2.500\n"));
     assert(strlen(last)>64); /* 完整一行可跨 USB FS 包。 */
+    sample.debug.mecanum_mode=true;
+    for(unsigned i=0;i<4;++i)
+        sample.debug.wheel[i].input.target_rad_s=(i==0 || i==3 ? 40.0f : -40.0f)*6.283185307179586f/60;
+    process(3015); complete();
+    assert(!strcmp(last,"40.000,-40.000,-40.000,40.000,-218.500,220.200,0.000,-100.000,0.398,-0.750,1.250,-2.500\n"));
+    sample.debug.mecanum_mode=false;
     sample.debug.common_target=-999999.0f*6.283185307179586f/60;
     for(unsigned i=0;i<4;++i) {
         sample.debug.wheel[i].input.speed=-999999.0f*6.283185307179586f/60;
         sample.debug.wheel[i].input.measured_current=-999999.0f;
     }
     sample.debug.wheel[3].input.feedback_ms=3015;
-    before=frames; process(3015); complete();
+    before=frames; process(3020); complete();
     assert(frames==before+1 && strlen(last)>96 && strlen(last)<128); /* 格式器允许范围内的最长九列。 */
     puts("PASS: four-mode nine-column CSV, signed feedback currents, no ready, 200Hz, offline zero, long frames, backpressure/reconnect and complete diagnostics.");
     return 0;

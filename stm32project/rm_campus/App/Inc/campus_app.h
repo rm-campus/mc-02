@@ -2,7 +2,7 @@
  * @file campus_app.h
  * @brief 校赛应用层接口：把底层驱动组织到现有 FreeRTOS 任务中。
  * 数据路径：UART5/DMA -> 遥控解析；FDCAN1 中断 -> 电机反馈；监测任务 -> LED。
- * 宏切换单电机/四轮独立速度 PI，启用前零电流，未实现麦轮运动学或 UART 舵机协议。
+ * 四轮模式下 CH8 选择同速或麦轮平移，各轮独立速度 PI。
  * 快照接口用于任务上下文；不要在高优先级中断里调用它们。
  */
 #ifndef CAMPUS_APP_H
@@ -25,8 +25,9 @@ typedef struct {
     uint8_t motor_id;
     uint32_t run_id; /* 从全部停止到至少一台 RUNNING 递增，区分串口回传会话。 */
     CampusMotorWheelSnapshot wheel[4]; /* 按 ID1~4，单电机模式未选中的轮状态为 DISABLED。 */
-    uint8_t active_mask, running_mask;
-    float common_target; /* 公共目标轮速，rad/s。 */
+    uint8_t active_mask, running_mask; /* bit0～3 对应 ID1～4：前者由模式选定，后者表示实际已启用。 */
+    bool mecanum_mode; /* 四轮模式 CH8 为 LOW。 */
+    float common_target; /* 同速模式的 CH2 目标，rad/s。 */
 } CampusMotorDebugSnapshot;
 
 typedef struct
@@ -61,6 +62,8 @@ typedef struct {
     CanRecoveryStatus recovery;
     Fxi6x_Data rc;
 } CampusMotorStatusSnapshot;
+/* 在任务上下文把最近的遥控、四轮反馈、控制输出和 CAN 诊断复制到 out。
+ * 各来源独立更新；now_ms 为复制时刻，各来源的新鲜度应按各自时间戳判断。NULL 时跳过。 */
 void Campus_CopyMotorStatus(CampusMotorStatusSnapshot *out);
 
 /* 所有 MX_xxx_Init 完成后、调度器启动前调用一次。先清零电机对象，再启动 CAN。 */

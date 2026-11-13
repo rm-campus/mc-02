@@ -14,6 +14,7 @@ static void step(uint32_t ms)
     in.now_ms += ms;
     in.rc_ms = in.feedback_ms = in.now_ms;
     in.period_ms = ms;
+    in.target_rad_s = (float)in.stick * (c.max_speed / 660.0f);
     MotorDebug_Step(&d, &c, &in);
     assert(fabsf(d.output_a) <= c.current_limit);
     assert(fabsf(d.integral_a) <= c.integral_limit);
