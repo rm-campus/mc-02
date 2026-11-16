@@ -26,6 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "campus_app.h"
+#include "servo_app.h"
 #include "usb_app.h"
 #include "imu_app.h"
 #include "flash_tasks.h"
@@ -264,20 +265,15 @@ Campus_ChassisTask(argument);
 
 /* USER CODE BEGIN Header_StartServoBusTask */
 /**
-  * @brief UART 舵机任务占位：待确认五个舵机的协议后接入。
-  * @note 当前只休眠，不发送舵机指令。
+  * @brief UART7 众灵总线舵机任务：五台独立查询、非阻塞请求调度。
+  * @note 上电只查询，不自动运动或改写设备参数。
   * @param argument 未使用。
   */
 /* USER CODE END Header_StartServoBusTask */
 void StartServoBusTask(void *argument)
 {
   /* USER CODE BEGIN StartServoBusTask */
-(void)argument;
-  /* 舵机型号和协议未确定，本次保留任务入口，不向总线发送指令。 */
-  for (;;)
-  {
-    osDelay(20U);
-  }
+  Campus_ServoTask(argument);
   /* USER CODE END StartServoBusTask */
 }
 

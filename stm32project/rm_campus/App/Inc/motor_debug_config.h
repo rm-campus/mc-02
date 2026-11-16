@@ -89,7 +89,7 @@
 #endif
 #define MOTOR_DEBUG_TELEMETRY_PERIOD_MS 5U
 /* CH7 最左拨杆：+1 关闭确认，-1 启用。CH2 左摇杆竖直。 */
-#define MOTOR_DEBUG_STICK_DEADBAND 60 /* 启用前回中；麦轮平移时两个轴各自过死区。 */
+#define MOTOR_DEBUG_STICK_DEADBAND 60 /* 启用前回中；麦轮模式 CH2/CH4/CH1 三轴各自过死区。 */
 #define MOTOR_DEBUG_ARM_HOLD_MS 300U
 #define MOTOR_DEBUG_RC_TIMEOUT_MS 100U
 #define MOTOR_DEBUG_FEEDBACK_TIMEOUT_MS 100U

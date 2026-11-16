@@ -1,13 +1,13 @@
 # rm_campus：达妙 MC02 校赛电控工程
 
-开发交接快照：**2026-11-13**。本目录是 STM32 固件工程根目录。
+开发交接快照：**2026-11-16**。本目录是 STM32 固件工程根目录。
 
 工程面向四轮麦克纳姆底盘与后续机械臂。主控为达妙 MC02（STM32H723VGT6），使用 HAL、
 FreeRTOS/CMSIS-RTOS2、CMake/Ninja 和 GNU Arm 工具链。
 
 **默认四轮模式，CH8（左起第二个拨杆）在运行中选择目标。+1 或 0 为 CH2 四轮同速，−1 为麦轮控制。左杆控制前后（CH2）和横移（CH4），右杆水平（CH1）控制旋转，右推对应俯视顺时针。三轴独立过 ±60 死区，可边走边转，合成后每轮最高 400 rpm。
 最左拨杆先 +1 确认关闭，再 -1 启用，各电机独立检查回中 300 ms 与基本静止；健康电机不等待缺失电机。**
-四轮模式以 200 Hz 发 CSV。同速 9 列，平移 12 列（ID1～4 目标 rpm、实测 rpm、反馈电流 A，各四列）。
+四轮模式以 200 Hz 发 CSV。同速 9 列，麦轮模式 12 列（ID1～4 目标 rpm、实测 rpm、反馈电流 A，各四列）。
 单电机模式保留 ready，随后 200 Hz 纯 CSV 四通道：目标 rpm、实测 rpm、指令 A、反馈 A。
 两种模式均无运行时限，共用 ±9.5 A、110℃ 与 100 ms 电机反馈超时。两个 Flash 任务开关均为 0。
 当前电机总线已切换到板载 CAN1（FDCAN1，PD0/RX、PD1/TX）；电调接线需同步移到 CAN1。
@@ -17,7 +17,7 @@ CAN 诊断和 LED 指示保留；反馈达到 100 ms 未更新时，仅对应电
 已移植 USTC-RoboWalker 的 Bus-Off Stop/Start 恢复方法，由现有 ChassisTask 执行；无需整板复位即可尝试恢复。
 硬件恢复后，活动电机任意一台新反馈可恢复总线发送；逐轮检查恢复反馈掩码，未收到新反馈的轮保持零电流，不阻塞其他轮。
 若已触发反馈离线等故障停机，恢复通信不自动重新使能；HAL 恢复失败则停止重试，诊断显示 FAILED。
-已实现 X 型麦轮平移与四轮速度闭环。轮位、安装方向和遥控轴正方向待实车标定。LED 绿色只表示通信在线。
+已实现 X 型麦轮平移、旋转混合与四轮速度闭环。轮位、安装方向和遥控轴正方向待实车标定。LED 绿色只表示通信在线。
 
 ## 新对话从这里开始
 
@@ -29,6 +29,7 @@ CAN 诊断和 LED 指示保留；反馈达到 100 ms 未更新时，仅对应电
 2. [FLASH_TASKS.md](FLASH_TASKS.md)：Flash 分区、两个功能开关、任务、日志生命周期和目标转速接口。
 3. [DRIVER_INTEGRATION.md](DRIVER_INTEGRATION.md)：遥控、CAN、电机、LED 和 USB 基础接口。
 4. [IMU_INTEGRATION.md](IMU_INTEGRATION.md)：BMI088、四元数 EKF、校准、坐标及限制。
+5. [SERVO_INTEGRATION.md](SERVO_INTEGRATION.md)：UART7 众灵舵机接线、ID、API、USB 命令和验收。
 
 继续开发前应重新核对实际源码和工作区改动；本文不是已经完成上板验收的声明。
 Flash 日志已直接读取 `Campus_CopyMotorStatus()` 中的四轮真实控制目标、反馈和 RUNNING 状态，
@@ -44,6 +45,7 @@ Flash 日志已直接读取 `Campus_CopyMotorStatus()` 中的四轮真实控制�
 | 遥控 | FS-i6X＋iA6B，UART5/PD2，100000 baud、8E2（HAL 9 位字长含偶校验），循环 DMA；板载电路已反相 |
 | BMI088 | SPI2 Mode 3 / 3 MHz；PC1 MOSI、PC2_C MISO、PB13 SCK；PC0 ACC_CS、PC3_C GYRO_CS；PE10/PE12 普通输入 |
 | RGB LED | SPI6 MOSI/PA7，6 MHz，WS2812 编码 |
+| 舵机总线 | UART7/PE8，P13-4，115200/8N1 半双工，开漏；PE7 不接，上拉/电平与独立动力供电需核对 |
 | USB | MCU 原生 USB，PA11/PA12，USB_OTG_HS 内置 FS PHY，CDC 虚拟串口 |
 | W25Q64JV | OCTOSPI2→OCTOSPIM Port 1；PB2 CLK、PE11 CS、PD11 IO0、PB0 IO1、PA3 IO2、PA1 IO3；10 MHz、Mode 3 |
 
@@ -64,8 +66,8 @@ W25 驱动使用普通单线指令和 24 位地址，不能因 CubeMX 配了四�
 | Flash 测试任务 | 功能保留，当前关闭；USB 测试帧写 Flash→实际读回→USB 完成后擦除 |
 | 电机日志 | 已适配四轮，当前关闭；100 Hz 保存四路目标和原始转速，read 回放八列 CSV 后清理 |
 | 底盘目标接口 | 已提供线程安全发布/快照接口；当前底盘尚未调用、目标默认无效 |
-| 底盘闭环 | X 型麦轮平移、四轮独立速度 PI；轮序与方向待标定 |
-| UART 舵机/机械臂 | ServoBusTask 仅占位，协议与控制尚未接入 |
+| 底盘闭环 | X 型麦轮平移、旋转混合与四轮独立速度 PI；轮序与方向待实车确认 |
+| UART 舵机/机械臂 | UART7 单线半双工、五台位置/查询/启停/扭力 API 已接入；上电只查询，不含内部 PID 控制或机械臂运动学 |
 
 已有主机回归和 Debug 编译通过记录。Flash 功能曾收到用户上板截图中的 `LOG NOT READY OR USB BUSY`，
 这只能说明 read 请求被解析并拒绝，不能作为 Flash 读写或四轮日志的完整实板验收。
@@ -95,7 +97,8 @@ Flash JEDEC ID、实际擦写、任务栈高水位、四轮方向和时序仍需
 - `velocity[4]`：减速箱输出轴 rad/s，已除减速比并应用 `reversed`。
 - `position[4]`：输出轴累计 rad；`current[4]`：A；`command[4]`：协议原始电流值。
 - 减速比为 `3591/187 ≈ 19.2032`。车轮直接连接输出轴时，车轮 rpm = 转子 rpm ÷ 减速比 × 方向。
-- 当前方向掩码为 0x0A（反转 ID2、ID4），电调 ID 与前后左右轮位尚未实测标定，不能假设 ID 1 就是某个轮位。
+- 当前方向掩码为 0x0A（反转 ID2、ID4），对单轮、四轮同速和麦轮模式均生效。
+- 配置轮位为左前 ID1、右前 ID2、左后 ID3、右后 ID4；这是程序约定，仍需与实车接线和安装方向核对。
 
 Flash 离线日志仅支持 FOUR，默认关闭；开启日志前须将 MOTOR_DEBUG_TELEMETRY 置 0。
 日志直接读取现有控制快照：四台均 RUNNING 且任意轮目标非零即开始，正负均可，不依赖摇杆边沿。
@@ -115,7 +118,7 @@ MLG2 每条 32 字节：四个 int32 历史目标（0.001 rpm）、四个 int16 
 上行仅表示列含义，线上不发送表头。全部为输出轴 rpm，三位小数、LF 结束，无 speed: 前缀或 ready。
 电脑按 status 的 period_ms 绘图，新日志为 10 ms；旧 50 Hz MLG2 保留 20 ms 回放周期。
 最后一帧 USB 确认完成后才擦除，断线保留日志并可重新 read。
-实时模式为单轮四列、四轮同速九列或平移十二列，均为 200 Hz；与离线八列日志通过宏切换。
+实时模式为单轮四列、四轮同速九列或麦轮十二列，均为 200 Hz；与离线八列日志通过宏切换。
 
 ## FreeRTOS 任务与开关
 
@@ -126,7 +129,7 @@ MLG2 每条 32 字节：四个 int32 历史目标（0.001 rpm）、四个 int16 
 | ImuTask | High2 / 42 | 1024 | 约 1 ms 周期采集与 EKF |
 | RcTask | High1 / 41 | 512 | 遥控 DMA 事件处理与解析 |
 | ChassisTask | High / 40 | 1024 | 1 ms 单电机/四轮独立 PI、逐轮启停与 CAN 恢复 |
-| ServoBusTask | AboveNormal / 32 | 512 | 舵机占位 |
+| ServoBusTask | AboveNormal / 32 | 512 | UART7 五台舵机，非阻塞请求、轮询和错误恢复 |
 | MonitorTask | Normal / 24 | 256 | 10 ms 在线状态汇总 |
 | MotorSpeedLogTask | Normal / 24 | 512 | 当前不创建；启用后 10 ms 采样或回放 |
 | UsbTask | BelowNormal / 16 | 1024 | USB 服务、200 Hz CSV 及 motor_status 手动诊断 |
@@ -159,13 +162,14 @@ build/Debug/             当前有效构建输出
 
 - `App/Src/campus_app.c`：电机快照、CAN 回调、遥控/底盘/监测任务。
 - `Bsp/Src/can.c`：Bus-Off ISR 请求、任务内 Stop/Start、旧队列清空检查及恢复发送门；首次立即尝试，重复尝试至少间隔 100 ms。
-- `App/Src/mecanum.c` 计算平移轮速，`motor_debug.c` 执行速度 PI 与逐轮启停，`motor_debug_usb.c` 发送实时 CSV。
+- `App/Src/mecanum.c` 合成平移和旋转轮速，`motor_debug.c` 执行速度 PI 与逐轮启停，`motor_debug_usb.c` 发送实时 CSV。
 - `App/Src/motor_status_usb.c`：只读诊断回复及输出协调；CAN 错误由 ChassisTask 统一采集并锁存，查询不清零。
 - `Bsp/Src/fxi6x.c`：保留每帧弱钩子；日志不再覆盖该钩子，改为读取现有控制快照。
 - `App/Src/usb_app.c` → `flash_tasks.c`：唯一 USB 接收消费者、换行组帧、命令分发。
 - `flash_test.c` / `motor_speed_log.c` → `flash_service.c` → `Bsp/Src/w25q64.c`：异步业务到 Flash 操作。
 - `Bsp/Src/usb_serial.c`：发送队列、会话、ZLP 与发送完成凭据；入队成功不等于传输完成。
 - `App/Src/chassis_targets.c`：保留的目标发布接口，当前日志不依赖它；不包含底盘运动学。
+- `servo_config.h`：舵机开关、ID/位置限位；servo_app.c 管理请求；servo_uart.c 为 UART7 端口；zp_servo.c 编解码；servo_usb.c 处理手动命令。
 
 ## 编译与测试
 
@@ -199,6 +203,7 @@ python tests/run_can_recovery_tests.py
 python tests/run_usb_serial_tests.py
 python tests/run_flash_tests.py
 python tests/run_motor_debug_tests.py --cc "E:/CLion/CLion 2026.2.2/bin/mingw/bin/gcc.exe"
+python tests/run_servo_tests.py
 python tests/run_imu_filter_tests.py
 python tests/run_imu_pipeline_tests.py
 ```
@@ -227,13 +232,13 @@ USB/Flash 测试脚本支持 `--cc <主机gcc路径>`；driver 脚本目前使�
 
 ## 当前待办与接续开发建议
 
-- 先按 SINGLE_MOTOR_DEBUG.md 架空验证单电机、回传和保护；初始 PI 未实机整定。
+- 已完成用户反馈的四轮空载联调；新增麦轮混合控制需按 SINGLE_MOTOR_DEBUG.md 验证轮向、回传和启停。
 - 实地记录阶段重新启用 Flash 后，再验证 `status`、`flash:`、`read` 全链路。
 - 确认四电机 ID 对应轮位、实际方向及机械传动比。
-- 在实车上验证 CH8 切换、逐轴死区和前进、横移、斜移方向。
+- 在实车上验证 CH8 切换、逐轴死区和前进、横移、斜移、旋转方向。
 - 上板验证非零四轮目标触发、八列历史目标/反馈、首次同时达标后 5 秒结束与最后一帧完成后擦除。
-- 架空确认四轮轮位和正方向，再低速落地验证平移。
-- 机械臂舵机协议和 IMU 加热均待后续明确需求。
+- 架空确认四轮轮位和正方向，再低速落地验证平移与旋转；日志模块不负责运动控制。
+- 舵机移植后需上板核对电平/上拉、逐台设置 ID、标定机械软限位；机械臂动作逻辑和 IMU 加热仍待接入。
 - 已知数据完整性边界：日志按用户要求没有 CRC；中途断电恢复不保证，状态说明见协议文件。
 
 ## GitHub 与工作区状态
@@ -245,14 +250,19 @@ USB/Flash 测试脚本支持 `--cc <主机gcc路径>`；driver 脚本目前使�
 远端仓库：[rm-campus/mc-02](https://github.com/rm-campus/mc-02)，远端固件目录为
 `stm32project/rm_campus/`，不是仓库根目录。
 
-本次同步基于 main 的遥控适配提交 `542d653`，提交说明为
-“加入了单个电机和四个电机同步的调试功能，完善了CAN通信的bus_off恢复”。
-完整源码、Flash 支持、诊断、测试及文档一起同步；实际提交编号以仓库 main 历史为准。
+本机电机/Flash 功能此前发布为 main 的 `b21086d`。
+2026-11-16 已合入远端 `1bf9e46`、`48dd9c2`：CH8 模式切换、左杆平移、CH1 旋转、
+ID2/4 方向反转、±60 死区及 9/12 列实时回传。CH8 运行中直接切换，不重新要求回中；
+单轮/同速模式运行时仍按 CH2 线性映射，±60 仅用于这两种模式的启用前回中。
 
 原 Windows 工作目录的 `.git` 为无提交的 main，未关联 origin；同步使用
 `build/publish-audit/checkout` 中的临时克隆。不要直接在工程根目录 `git add .` 并推送整个目录。
 正确同步应基于远端已有历史，按 `stm32project/rm_campus/` 路径放入经过审查的改动，并保留远端其它文件。
 历史操作中 GitHub 连接器写入返回过 403，本机 Git 凭据管理器则有可用登录；不要输出凭据或令牌。
+
+2026-11-16 用户已确认将 UART7 舵机驱动及其集成改动一并纳入 main 发布版本，撤销此前暂不发布舵机部分的限制。
+本版本保留麦轮控制、舵机 USB 诊断与实时 CSV 的输出协调；电机、舵机、Flash 和 CAN 恢复主机测试通过，
+Debug 与 FlashLog 两种 ARM 固件均编译通过。尚未烧录，舵机和新增麦轮控制仍需实板验收。
 
 不要提交 `.codex-backups/`、`build/`、`cmake-build-*/`、IDE 本机配置、测试产物、缓存和 `*.bak`。
 不要把未上板验证的功能描述为已经通过硬件验收。

@@ -151,6 +151,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
  * @brief UART 接收出现奇偶校验、帧格式、溢出等错误时记录并请求恢复。
  * 这里只置位和通知，不在 ISR 中执行 Abort、重启、延时或打印。
  */
+__attribute__((weak)) void Bsp_UnhandledUartError(UART_HandleTypeDef *huart) { (void)huart; }
+
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart5)
@@ -159,6 +161,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
         s_restart = true;
         notify_task();
     }
+    else Bsp_UnhandledUartError(huart);
 }
 
 /**

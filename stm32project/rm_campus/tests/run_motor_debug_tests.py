@@ -47,7 +47,7 @@ def main():
         for protection in (0, 1):
             exe = Path(temporary) / f"motor_debug_test_{protection}.exe"
             subprocess.run([
-                args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                args.cc, "-std=c11", "-DSERVO_USB_DEBUG_ENABLE=0", "-O2", "-Wall", "-Wextra", "-Werror",
                 f"-DMOTOR_DEBUG_CAN_FAULT_ENABLE={protection}",
                 "-I" + str(root / "App/Inc"),
                 str(root / "tests/motor_debug_test.c"),
@@ -70,7 +70,7 @@ def main():
         for enabled, protection in ((0, 0), (0, 1), (1, 0), (1, 1)):
             exe = folder / f"app_{enabled}_{protection}.exe"
             subprocess.run([
-                args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                args.cc, "-std=c11", "-DSERVO_USB_DEBUG_ENABLE=0", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-I" + str(folder), "-I" + str(root / "App/Inc"), "-I" + str(root / "Bsp/Inc"),
                 f"-DMOTOR_DEBUG_ENABLE={enabled}", "-DMOTOR_DEBUG_MOTOR_ID=3", "-DMOTOR_DEBUG_KP=0.5f",
                 "-DMOTOR_DEBUG_MODE=0",
@@ -83,7 +83,7 @@ def main():
 
         exe = folder / "telemetry.exe"
         subprocess.run([
-            args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+            args.cc, "-std=c11", "-DSERVO_USB_DEBUG_ENABLE=0", "-O2", "-Wall", "-Wextra", "-Werror",
             "-DMOTOR_DEBUG_MODE=0",
             "-I" + str(folder),
             "-I" + str(root / "App/Inc"), "-I" + str(root / "Bsp/Inc"),
@@ -100,7 +100,7 @@ def main():
         for telemetry in (0, 1):
             exe = folder / f"status_{telemetry}.exe"
             subprocess.run([
-                args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                args.cc, "-std=c11", "-DSERVO_USB_DEBUG_ENABLE=0", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-I" + str(folder), "-I" + str(root / "App/Inc"), "-I" + str(root / "Bsp/Inc"),
                 f"-DMOTOR_DEBUG_TELEMETRY={telemetry}",
                 "-DMOTOR_DEBUG_MODE=0",
@@ -113,7 +113,7 @@ def main():
         for enabled in (0, 1):
             exe = folder / f"four_app_{enabled}.exe"
             subprocess.run([
-                args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                args.cc, "-std=c11", "-DSERVO_USB_DEBUG_ENABLE=0", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-I" + str(folder), "-I" + str(root / "App/Inc"), "-I" + str(root / "Bsp/Inc"),
                 "-DMOTOR_DEBUG_MODE=1", f"-DMOTOR_DEBUG_ENABLE={enabled}",
                 "-DMOTOR_DEBUG_M1_KP=0.05f", "-DMOTOR_DEBUG_M2_KP=0.10f", "-DMOTOR_DEBUG_M3_KP=0.15f", "-DMOTOR_DEBUG_M4_KP=0.20f",
@@ -124,7 +124,7 @@ def main():
             subprocess.run([str(exe)], check=True, timeout=10)
         exe = folder / "four_usb.exe"
         subprocess.run([
-            args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-DMOTOR_DEBUG_MODE=1",
+            args.cc, "-std=c11", "-DSERVO_USB_DEBUG_ENABLE=0", "-O2", "-Wall", "-Wextra", "-Werror", "-DMOTOR_DEBUG_MODE=1",
             "-I" + str(folder), "-I" + str(root / "App/Inc"), "-I" + str(root / "Bsp/Inc"),
             *[str(root / p) for p in ["tests/four_motor_usb_test.c", "App/Src/motor_status_usb.c",
                 "App/Src/motor_debug_usb.c", "App/Src/flash_tasks.c", "App/Src/usb_app.c"]],

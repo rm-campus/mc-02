@@ -72,7 +72,7 @@ def main():
                  'task.h': '#pragma once\n#define taskENTER_CRITICAL() ((void)0)\n#define taskEXIT_CRITICAL() ((void)0)\n'}
         for name, data in stubs.items():
             (folder / name).write_text(data, encoding='utf-8')
-        common = [args.cc, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+        common = [args.cc, '-std=c11', '-DSERVO_USB_DEBUG_ENABLE=0', '-O2', '-Wall', '-Wextra', '-Werror',
                   '-I' + str(folder), '-I' + str(root / 'App/Inc'), '-I' + str(root / 'Bsp/Inc')]
         incompatible = subprocess.run(common + ['-DMOTOR_SPEED_LOG_TASK_ENABLE=1', '-DMOTOR_DEBUG_MODE=0',
                                                '-x', 'c', '-fsyntax-only', '-'],

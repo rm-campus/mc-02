@@ -74,7 +74,7 @@ def main():
             '#define taskEXIT_CRITICAL() test_exit_critical()\n', encoding="utf-8")
         exe = folder / "usb_serial_tests.exe"
         subprocess.run([
-            args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-DMOTOR_DEBUG_TELEMETRY=0",
+            args.cc, "-std=c11", "-DSERVO_USB_DEBUG_ENABLE=0", "-O2", "-Wall", "-Wextra", "-Werror", "-DMOTOR_DEBUG_TELEMETRY=0",
             "-I" + str(folder),
             "-I" + str(root / "Bsp/Inc"), "-I" + str(root / "App/Inc"),
             "-I" + str(root / "USB_DEVICE/App"),

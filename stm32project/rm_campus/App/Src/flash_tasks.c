@@ -7,6 +7,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "motor_status_usb.h"
+#include "servo_usb.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -76,6 +77,7 @@ static void dispatch_line(void)
     uint16_t length = s_length;
     while (length && (s_line[length - 1U] == '\r' || s_line[length - 1U] == '\n')) --length;
     if (length == 0U) return;
+    if (ServoUsb_Dispatch(s_line,length)) return;
     if (length == 12U && memcmp(s_line, "motor_status", 12U) == 0) {
         MotorStatusUsb_Request();
         return;

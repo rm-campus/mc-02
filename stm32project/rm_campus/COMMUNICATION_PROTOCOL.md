@@ -1,6 +1,6 @@
 # USB 通信协议与状态码
 
-更新日期：2026-11-13。本文描述当前工程已经实现的 USB 应用层协议，不是未来接口设计。
+更新日期：2026-11-14。本文描述当前工程已经实现的 USB 应用层协议，不是未来接口设计。
 实现入口：[flash_tasks.c](App/Src/flash_tasks.c)、[usb_app.c](App/Src/usb_app.c)。
 任务、分区和底盘接口说明另见 [FLASH_TASKS.md](FLASH_TASKS.md)。
 
@@ -47,6 +47,30 @@ ready
 
 编号 1～后续章节描述 Flash 模式，当前关闭。日志已升级为四轮目标/反馈八列纯 CSV，100 Hz；不支持单轮日志。
 启用任一 Flash 任务前须关闭 MOTOR_DEBUG_TELEMETRY。操作细节见 [SINGLE_MOTOR_DEBUG.md](SINGLE_MOTOR_DEBUG.md)。
+
+## UART7 舵机手动命令
+
+SERVO_BUS_ENABLE=1、SERVO_USB_DEBUG_ENABLE=1，Flash 开关关闭时也可使用。命令追加真实 LF，接受 CRLF。
+上电只查询 001～005，不自动移动或改写 ID/模式/波特率/PID。硬件接线、ID 和软限位见 [SERVO_INTEGRATION.md](SERVO_INTEGRATION.md)。
+
+| 命令 | 作用 |
+|---|---|
+| servo_status | 查询五台在线、P 位置值/年龄、模式/版本、限位、最近 ticket/result 和总线错误 |
+| servo_read 001 | 提交位置查询，随后用 servo_status 查看结果 |
+| servo_move 001 1500 1000 | ID1 运动到 P1500，时间 1000 ms；要求在线、模式 1～4、通过该轴位置限位 |
+| servo_stop 001 | 终止该轴动作 |
+| servo_pause 001 / servo_resume 001 | 暂停 / 继续 |
+| servo_torque 001 0 / servo_torque 001 1 | 释放 / 恢复扭力，需显式调用 |
+
+数字为非负十进制，拒绝缺少/多余参数与广播 ID。P 不是角度，time 范围 0～9999 ms。
+返回 SERVO QUEUED id=1 ticket=7; use servo_status for result 只表示入队，运动命令没有硬件 ACK，发送完成也不证明到位。
+同 ID 未发送的位置请求合并为最新值；离线取消未发送动作。last ticket/result 不构成完整请求历史。
+回复槽满时新命令不执行，随后给出 SERVO BUSY rejected=N。接口错误包括 INVALID、RANGE、OFFLINE、BAD_MODE、NOT_READY、DISABLED。
+执行结果还可为 TX_ERROR、UART_ERROR、TIMEOUT。没有自动重试运动命令。
+
+手动回复用 SERVO_STATUS BEGIN/END 包围或单行 SERVO 文本；回复时暂停周期电机 CSV，不插入 Flash 回放。
+USB 断开丢弃未完成回复，已受理动作不会因此自动撤销。诊断文本会包含数字，分析曲线时应排除手动诊断段。
+完整字段说明见 SERVO_INTEGRATION.md。舵机仅手动诊断，不增加自动 CSV 通道；实时电机数据为同速九列或麦轮十二列，日志仍为八列。舵机诊断期间暂停实时 CSV，报告完成后恢复。
 
 ## motor_status：电机与 CAN 诊断
 

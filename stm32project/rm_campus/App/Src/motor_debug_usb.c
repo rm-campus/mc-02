@@ -2,6 +2,7 @@
 #include "motor_debug_config.h"
 #include "flash_tasks_config.h"
 #include "motor_status_usb.h"
+#include "servo_usb.h"
 
 /* 两种输出协议分时使用，防止重新开启 Flash 后调试帧夹入 Flash 回传。 */
 #if MOTOR_DEBUG_TELEMETRY && FLASH_TASKS_ENABLE
@@ -54,7 +55,7 @@ static int milli(float value)
 
 void MotorDebugUsb_Process(void)
 {
-    if (MotorStatusUsb_Busy()) return;
+    if (MotorStatusUsb_Busy() || ServoUsb_Busy()) return;
     CampusMotorDebugSnapshot d;
     UsbSerialStatus usb;
     Campus_CopyMotorDebug(&d);

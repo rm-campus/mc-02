@@ -2,7 +2,8 @@
  * @file campus_app.h
  * @brief 校赛应用层接口：把底层驱动组织到现有 FreeRTOS 任务中。
  * 数据路径：UART5/DMA -> 遥控解析；FDCAN1 中断 -> 电机反馈；监测任务 -> LED。
- * 四轮模式下 CH8 选择同速或麦轮平移，各轮独立速度 PI。
+ * 四轮模式下 CH8 选择同速或麦轮平移与旋转，各轮独立速度 PI。
+ * UART7 舵机由独立 ServoBusTask 管理。
  * 快照接口用于任务上下文；不要在高优先级中断里调用它们。
  */
 #ifndef CAMPUS_APP_H

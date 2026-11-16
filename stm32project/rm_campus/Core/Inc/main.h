@@ -57,6 +57,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define SERVO_BUS_Pin GPIO_PIN_8
+#define SERVO_BUS_GPIO_Port GPIOE
 #define W25Q64_IO3_Pin GPIO_PIN_1
 #define W25Q64_IO3_GPIO_Port GPIOA
 #define W25Q64_IO2_Pin GPIO_PIN_3

@@ -3,6 +3,7 @@
 #include "flash_tasks.h"
 #include "motor_debug_usb.h"
 #include "motor_status_usb.h"
+#include "servo_usb.h"
 
 #define USB_APP_RX_CHUNK 256U
 
@@ -25,6 +26,7 @@ void Campus_UsbProcess(void)
         Campus_UsbOnReceive(data, length);
     }
     MotorStatusUsb_Process();
+    ServoUsb_Process();
     MotorDebugUsb_Process();
     UsbSerial_Process();
 }

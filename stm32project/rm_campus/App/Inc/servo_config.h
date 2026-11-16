@@ -1,0 +1,34 @@
+#ifndef SERVO_CONFIG_H
+#define SERVO_CONFIG_H
+#ifndef SERVO_BUS_ENABLE
+#define SERVO_BUS_ENABLE 1
+#endif
+#ifndef SERVO_USB_DEBUG_ENABLE
+#define SERVO_USB_DEBUG_ENABLE 1
+#endif
+#define SERVO_COUNT 5U
+/* 先逐台配置 ID，再并联。这里只描述设备，不向舵机写 ID/波特率/模式/PID。 */
+#define SERVO_DEVICE_TABLE \
+    {1U, "ZP30", 500U, 2500U}, \
+    {2U, "ZP35", 500U, 2500U}, \
+    {3U, "ZP45", 500U, 2500U}, \
+    {4U, "ZP25S", 500U, 2500U}, \
+    {5U, "ZP25S", 500U, 2500U}
+/* 上表是协议限位，安装后的机械软限位必须按各关节标定后收窄。 */
+#define SERVO_QUEUE_SIZE 16U
+#define SERVO_RX_RING_SIZE 256U
+#define SERVO_TX_TIMEOUT_MS 20U
+#define SERVO_REPLY_TIMEOUT_MS 20U
+#define SERVO_POLL_SLOT_MS 10U
+#define SERVO_POLL_PERIOD_MS 50U
+#define SERVO_OFFLINE_RETRY_MS 1000U
+#define SERVO_FAIL_LIMIT 3U
+#define SERVO_POSITION_STALE_MS 200U
+#define SERVO_MOVE_INTERVAL_MS 20U
+#define SERVO_RECOVERY_QUIET_MS 30U
+#define SERVO_BUS_GAP_MS 1U
+#define SERVO_TASK_FLAG 1U
+#if (SERVO_BUS_ENABLE != 0 && SERVO_BUS_ENABLE != 1) || (SERVO_USB_DEBUG_ENABLE != 0 && SERVO_USB_DEBUG_ENABLE != 1)
+#error "Invalid servo enable switch"
+#endif
+#endif

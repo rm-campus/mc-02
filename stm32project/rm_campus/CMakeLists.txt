@@ -72,6 +72,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/can.c
     Bsp/Src/motor_3508.c
     Bsp/Src/fxi6x.c
+    Bsp/Src/servo_uart.c
+    Bsp/Src/zp_servo.c
+    App/Src/servo_app.c
+    App/Src/servo_usb.c
     Bsp/Src/led.c
     Bsp/Src/usb_serial.c
     Bsp/Src/bmi088.c
