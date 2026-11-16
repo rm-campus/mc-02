@@ -86,7 +86,7 @@ void Campus_CopyMotorDebug(CampusMotorDebugSnapshot *out)
 /**
  * @brief 初始化四台 M3508 的软件状态并启动 CAN 接收。
  * @note 调用前必须完成 MX_FDCAN1_Init；对象必须先于接收中断初始化。
- * MOTOR_REVERSED_MASK 按 C620 ID 修正电流与反馈方向，默认 0U；按实际安装标定。
+ * MOTOR_REVERSED_MASK 按 C620 ID 修正电流与反馈方向。
  */
 void Campus_Init(void)
 {
@@ -243,10 +243,11 @@ void Campus_ChassisTask(void *argument)
         float targets[4] = {frame.common_target, frame.common_target,
                             frame.common_target, frame.common_target};
 #if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
-        /* CH8 每周期读取：-1 用平移目标，0/+1 用同速目标。使能仍由 CH7 决定。 */
+        /* CH8 = -1 合成左杆平移与右杆旋转；0/+1 用同速目标。 */
         frame.mecanum_mode = rc.switch_b == FXI6X_LOW;
         if (frame.mecanum_mode) {
-            Mecanum_Translate(rc.rocker_l_v, rc.rocker_l_h, base.deadband, base.max_speed, targets);
+            Mecanum_Mix(rc.rocker_l_v, rc.rocker_l_h, rc.rocker_r_h,
+                        base.deadband, base.max_speed, targets);
         }
 #endif
         for (uint8_t i = 0; i < 4U; ++i) {
@@ -259,6 +260,7 @@ void Campus_ChassisTask(void *argument)
                 .feedback_ms = motors.last_feedback_ms[i],
                 .enable_switch = rc.switch_a, .stick = rc.rocker_l_v,
                 .lateral_stick = frame.mecanum_mode ? rc.rocker_l_h : 0,
+                .turn_stick = frame.mecanum_mode ? rc.rocker_r_h : 0,
                 .target_rad_s = targets[i],
                 .speed = motors.velocity[i], .measured_current = motors.current[i],
                 .temperature = motors.temperature[i]

@@ -125,7 +125,8 @@ void MotorDebug_Step(MotorDebug *d, const MotorDebugConfig *c, const MotorDebugI
     if (!d->off_seen) return;
     if (d->state != MOTOR_DEBUG_RUNNING) {
         if (in->stick < -c->deadband || in->stick > c->deadband ||
-            in->lateral_stick < -c->deadband || in->lateral_stick > c->deadband) {
+            in->lateral_stick < -c->deadband || in->lateral_stick > c->deadband ||
+            in->turn_stick < -c->deadband || in->turn_stick > c->deadband) {
             d->centering = false;
             return;
         }

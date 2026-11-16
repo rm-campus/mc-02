@@ -175,7 +175,7 @@ int main(void)
     step(1);
     for (unsigned n=0;n<299;++n) step(1);
     assert(d.state != MOTOR_DEBUG_RUNNING);
-    in.stick=41; step(1); in.stick=0; step(1);
+    in.stick=c.deadband+1; step(1); in.stick=0; step(1);
     for (unsigned n=0;n<299;++n) step(1);
     assert(d.state != MOTOR_DEBUG_RUNNING);
     step(1); assert(d.state == MOTOR_DEBUG_RUNNING);

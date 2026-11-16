@@ -39,6 +39,7 @@ typedef struct {
     int8_t enable_switch; /* +1 关闭，0 中档，-1 启用。 */
     int16_t stick;        /* -660～660。 */
     int16_t lateral_stick; /* 平移模式的 CH4，用于启用前回中；其他模式填 0。 */
+    int16_t turn_stick;    /* 麦轮模式的 CH1，共用启用前回中条件。 */
     float target_rad_s;   /* 底盘任务给本轮的输出轴角速度。 */
     float speed, measured_current; /* C620 反馈：减速后输出轴角速度 rad/s、电流 A。 */
     uint8_t temperature;

@@ -28,16 +28,21 @@ bool Can_Send(uint32_t id,const uint8_t *data,uint8_t size)
     int16_t raw[4];
     for(unsigned i=0;i<4;++i) {
         raw[i]=(int16_t)(((uint16_t)data[2*i]<<8)|data[2*i+1]);
+        /* 纯旋转：右侧电调已按安装方向反转，四路线上电流在此测试中同号。 */
+        if (MOTOR_DEBUG_ENABLE && scenario==9 && now==700) assert(raw[i]>0);
+        if (MOTOR_DEBUG_ENABLE && scenario==9 && now==710) assert(raw[i]<0);
         if(!MOTOR_DEBUG_ENABLE || (now>=1200 && now<1505)) assert(raw[i]==0);
         if(MOTOR_DEBUG_ENABLE && now>=950 && now<1200) {
             bool stopped=(scenario==1 && i==0) || (scenario==2 && i==1) ||
                 (scenario==3 && i==2) || (scenario==4 && i==3) || scenario==6 ||
                 (scenario==5 && now<1150 && (i==1 || i==3));
-            if(stopped) assert(raw[i]==0); else assert(raw[i]>0);
+            if(stopped) assert(raw[i]==0);
+            else if(i==1 || i==3) assert(raw[i]<0);
+            else assert(raw[i]>0);
         }
     }
     if(MOTOR_DEBUG_ENABLE && scenario==0 && now==1000)
-        assert(raw[0]<raw[1] && raw[1]<raw[2] && raw[2]<raw[3]);
+        assert(raw[0]<-raw[1] && -raw[1]<raw[2] && raw[2]<-raw[3]);
     return true;
 }
 HAL_StatusTypeDef HAL_FDCAN_GetProtocolStatus(FDCAN_HandleTypeDef *h,FDCAN_ProtocolStatusTypeDef *p)
@@ -65,19 +70,50 @@ void Fxi6x_CopyData(Fxi6x_Data *rc)
     if (scenario==8 && now<1200) {
         rc->switch_b = now>=900 ? FXI6X_HIGH : FXI6X_LOW;
         rc->rocker_l_v = 0;
-        rc->rocker_l_h = now<350 ? 41 : 0; /* CH4 单独偏移也会阻止启用。 */
+        rc->rocker_l_h = now<350 ? 61 : 0; /* CH4 单独偏移也会阻止启用。 */
         if (now>=700) {
-            rc->rocker_l_h = 350;
-            if (now>=750) rc->rocker_l_v = 350;
-            if (now>=800) rc->rocker_l_h = -40;
+            rc->rocker_l_h = 360;
+            if (now>=750) rc->rocker_l_v = 360;
+            if (now>=800) rc->rocker_l_h = -60;
             if (now>=850 && now<900) rc->rocker_l_h = -660;
         }
+    }
+    if (scenario==9 && now<740) {
+        rc->switch_b = FXI6X_LOW;
+        rc->rocker_l_v = 0;
+        rc->rocker_r_h = now<350 ? 61 : 0;
+        if (now>=700) rc->rocker_r_h = 360;
+        if (now>=710) rc->rocker_r_h = -360;
+        if (now>=720) rc->rocker_r_h = -60;
+        if (now>=730) {
+            rc->rocker_l_v = 660;
+            rc->rocker_l_h = -660;
+            rc->rocker_r_h = 660;
+        }
+    } else if (scenario==9) {
+        rc->rocker_r_h = 660; /* 同速档忽略 CH1。 */
     }
 }
 TickType_t xTaskGetTickCount(void) { return now; }
 void vTaskDelayUntil(TickType_t *wake,TickType_t delta)
 {
     *wake+=delta; now=*wake;
+    if (scenario==9 && MOTOR_DEBUG_ENABLE && now<=741) {
+        CampusMotorDebugSnapshot d; Campus_CopyMotorDebug(&d);
+        if (now==600) assert(d.running_mask==0);
+        if (now>=701) {
+            const float mixed[] = {1.0f/3, 1.0f/3, 1.0f, -1.0f/3};
+            assert(d.running_mask==15);
+            for (unsigned i=0;i<4;++i) {
+                float expected = (i==0 || i==2) ? 0.5f : -0.5f;
+                if (now>710) expected = -expected;
+                if (now>720) expected = 0;
+                if (now>730) expected = mixed[i];
+                if (now>740) expected = 0.5f;
+                assert(fabsf(d.wheel[i].control.target - expected*MOTOR_DEBUG_MAX_SPEED)<0.001f);
+            }
+        }
+    }
     if (scenario==8 && MOTOR_DEBUG_ENABLE && now<=901) {
         CampusMotorDebugSnapshot d; Campus_CopyMotorDebug(&d);
         assert(d.mecanum_mode==(now<=900));
@@ -88,7 +124,7 @@ void vTaskDelayUntil(TickType_t *wake,TickType_t delta)
             if (now>750) { plus=2*half; minus=0; }
             if (now>800) { plus=minus=half; }
             if (now>850) { plus=-2*half/3; minus=2*half; }
-            if (now>900) { plus=minus=MOTOR_DEBUG_MAX_SPEED*350/660; }
+            if (now>900) { plus=minus=MOTOR_DEBUG_MAX_SPEED*360/660; }
             assert(d.running_mask==15);
             for (unsigned i=0;i<4;++i)
                 assert(fabsf(d.wheel[i].control.target-((i==0 || i==3)?plus:minus))<0.001f);
@@ -114,7 +150,7 @@ bool Led_Init(void) { return true; }
 bool Led_SetRGB(uint8_t a,uint8_t b,uint8_t c) { (void)a;(void)b;(void)c;return true; }
 int main(void)
 {
-    for(scenario=0;scenario<9;++scenario) {
+    for(scenario=0;scenario<10;++scenario) {
         now=pending=tx_count=depth=0; Campus_Init();
         if(setjmp(done)==0) Campus_ChassisTask(NULL);
         CampusMotorDebugSnapshot d; Campus_CopyMotorDebug(&d);
