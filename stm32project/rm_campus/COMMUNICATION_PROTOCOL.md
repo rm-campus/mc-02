@@ -4,6 +4,26 @@
 实现入口：[flash_tasks.c](App/Src/flash_tasks.c)、[usb_app.c](App/Src/usb_app.c)。
 任务、分区和底盘接口说明另见 [FLASH_TASKS.md](FLASH_TASKS.md)。
 
+
+## CH9 舵机遥控自动回传（优先于下述电机实时输出）
+
+默认 SERVO_RC_ENABLE=1、SERVO_RC_TELEMETRY_ENABLE=1。遥控有效且 CH9 为0/-1时，每20ms发送五列纯CSV：
+
+```text
+135.000,120.150,90.045,150.120,-1.000
+```
+
+依次为 ID1～5 的回读协议角度（°），不是目标角度；无表头、无 ready，LF结束。
+270°模式以P500为0°、P1500为135°；180°模式以P1500为90°。未收到/过期/模式未知为-1.000。
+50Hz指USB回传，每台位置查询仍约20Hz，允许重复最新测量。
+CH9=+1恢复原电机200Hz输出；0/-1时仅替换自动输出，底盘仍按CH7/CH8运行。
+手动诊断期间暂停CSV，USB繁忙不积压补发；切换时上一帧可先发送完成，再切换列数。
+servo_status 新增 RC 行：enabled/config_valid/off_seen/selected/armed/fault，掩码bit0～4对应ID1～5。
+遥控组内拒绝手动move/resume/恢复扭矩，手动停止/暂停/释力锁住对应轴，需CH9回+1再重新启用。
+Flash模式需同时关闭 SERVO_RC_TELEMETRY_ENABLE 和 MOTOR_DEBUG_TELEMETRY；Flash回放八列保持不变。
+详细启用流程、轴映射和限位见 SERVO_INTEGRATION.md。
+
+
 ## 当前调试模式：纯 CSV，默认四轮
 
 模式由 motor_debug_config.h 中 MOTOR_DEBUG_MODE 选择：SINGLE=0、FOUR=1，默认 FOUR。
@@ -46,7 +66,7 @@ ready
 新助手实机绘图效果仍待核验；手动诊断文字中的数字可能被通用绘图解析，曲线分析时应排除诊断段。
 
 编号 1～后续章节描述 Flash 模式，当前关闭。日志已升级为四轮目标/反馈八列纯 CSV，100 Hz；不支持单轮日志。
-启用任一 Flash 任务前须关闭 MOTOR_DEBUG_TELEMETRY。操作细节见 [SINGLE_MOTOR_DEBUG.md](SINGLE_MOTOR_DEBUG.md)。
+启用任一 Flash 任务前须关闭 MOTOR_DEBUG_TELEMETRY 和 SERVO_RC_TELEMETRY_ENABLE。操作细节见 [SINGLE_MOTOR_DEBUG.md](SINGLE_MOTOR_DEBUG.md)。
 
 ## UART7 舵机手动命令
 
@@ -70,7 +90,7 @@ SERVO_BUS_ENABLE=1、SERVO_USB_DEBUG_ENABLE=1，Flash 开关关闭时也可使�
 
 手动回复用 SERVO_STATUS BEGIN/END 包围或单行 SERVO 文本；回复时暂停周期电机 CSV，不插入 Flash 回放。
 USB 断开丢弃未完成回复，已受理动作不会因此自动撤销。诊断文本会包含数字，分析曲线时应排除手动诊断段。
-完整字段说明见 SERVO_INTEGRATION.md。舵机仅手动诊断，不增加自动 CSV 通道；实时电机数据为同速九列或麦轮十二列，日志仍为八列。舵机诊断期间暂停实时 CSV，报告完成后恢复。
+完整字段说明见 SERVO_INTEGRATION.md。舵机支持手动诊断和 CH9 控制的五列角度回传；电机同速九列或麦轮十二列与舵机五列互斥输出，日志仍为八列。诊断期间暂停实时 CSV，报告完成后恢复。
 
 ## motor_status：电机与 CAN 诊断
 
@@ -233,7 +253,7 @@ USB 中断时不执行发送后的擦除。连接恢复且旧队列排空后，�
 
 ### 4.1 记录触发与结束
 
-日志仅支持 MOTOR_DEBUG_MODE_FOUR。开启 MOTOR_SPEED_LOG_TASK_ENABLE 前关闭 MOTOR_DEBUG_TELEMETRY。
+日志仅支持 MOTOR_DEBUG_MODE_FOUR。开启 MOTOR_SPEED_LOG_TASK_ENABLE 前关闭 MOTOR_DEBUG_TELEMETRY 和 SERVO_RC_TELEMETRY_ENABLE。
 在 READY 且控制快照有效、遥控有效、拨杆为 -1 时，四台均 RUNNING 且任意目标非零立即开始；
 正负目标均触发，不读取摇杆边沿。首次就绪时已满足条件也可开始，不必重新经历零到非零。
 待回放、回放、清理时不覆盖已有日志；清理后若条件持续成立不自动重录，需先解除再成立。
@@ -430,3 +450,14 @@ status 没有单独开关字段：关闭的测试模块可能显示 TEST state=0
 
 日志已改读现有四轮控制快照，不依赖 Chassis_SetTargetWheelRpm。target=1 只表示目标快照有效，
 不表示四轮已运行或达到目标。后续底盘应维护四个实际控制目标与运行状态，日志模块不会使电机转动。
+
+## 速度IK预备模块的错误回传
+
+ARM_VELOCITY_IK_ENABLE默认0，无新增自动数据。开启后出现锁存故障时，USB可用且空闲时每200ms发一行ARM_ERROR，
+包含code、joint、servo_id、requested、limit、unit及平移/角速度残差。故障暂停普通电机/舵机自动CSV，手动诊断和Flash完整事务仍优先。
+错误是文本而非五列角度CSV。断开USB不会清错，重连继续报告。
+LINEAR_SPEED_LIMIT和JOINT_SPEED_LIMIT只能通过MCU复位清除，保持原错误原因和5Hz回传；
+改为零/合法速度、Arm_ClearFault、Arm_Enable、Arm_Stop及重复Arm_Init/Servo_Init均不能恢复。
+实际IK输出时，新Move/Resume/TorqueOn也被拒绝，防止绕过复位锁存；复位后仍须按原流程显式使能。
+当前不增加串口使能或运动命令；其他错误保留通过Arm API清错和重新使能的流程。
+关节序号为肩到爪1～5，对应总线ID 3/2/1/4/5；requested不是实测转速。完整协议与恢复流程见ARM_KINEMATICS.md。

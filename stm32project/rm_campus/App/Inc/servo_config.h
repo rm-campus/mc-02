@@ -6,6 +6,22 @@
 #ifndef SERVO_USB_DEBUG_ENABLE
 #define SERVO_USB_DEBUG_ENABLE 1
 #endif
+#ifndef SERVO_RC_ENABLE
+#define SERVO_RC_ENABLE 1
+#endif
+#ifndef SERVO_RC_TELEMETRY_ENABLE
+#define SERVO_RC_TELEMETRY_ENABLE 1
+#endif
+#define SERVO_RC_PERIOD_MS 20U
+#define SERVO_RC_TELEMETRY_MS 20U
+#define SERVO_RC_DEADBAND 60
+#define SERVO_RC_CENTER_HOLD_MS 300U
+#define SERVO_RC_TIMEOUT_MS 100U
+#define SERVO_RC_MAX_PERIOD_MS 50U
+/* ID1..5 的摇杆正向对应 P 增加(+1)或减小(-1)，最大协议角速度 deg/s。
+ * 不增加底盘 yaw 舵机。下方位置范围仍是协议范围，装配后必须逐轴收窄。 */
+#define SERVO_RC_AXIS_TABLE \
+    {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}
 #define SERVO_COUNT 5U
 /* 先逐台配置 ID，再并联。这里只描述设备，不向舵机写 ID/波特率/模式/PID。 */
 #define SERVO_DEVICE_TABLE \
@@ -30,5 +46,8 @@
 #define SERVO_TASK_FLAG 1U
 #if (SERVO_BUS_ENABLE != 0 && SERVO_BUS_ENABLE != 1) || (SERVO_USB_DEBUG_ENABLE != 0 && SERVO_USB_DEBUG_ENABLE != 1)
 #error "Invalid servo enable switch"
+#endif
+#if (SERVO_RC_ENABLE != 0 && SERVO_RC_ENABLE != 1) || (SERVO_RC_TELEMETRY_ENABLE != 0 && SERVO_RC_TELEMETRY_ENABLE != 1)
+#error "Invalid servo RC switch"
 #endif
 #endif

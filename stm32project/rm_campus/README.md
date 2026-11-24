@@ -1,6 +1,6 @@
 # rm_campus：达妙 MC02 校赛电控工程
 
-开发交接快照：**2026-11-16**。本目录是 STM32 固件工程根目录。
+开发交接快照：**2026-11-24**。本目录是 STM32 固件工程根目录。
 
 工程面向四轮麦克纳姆底盘与后续机械臂。主控为达妙 MC02（STM32H723VGT6），使用 HAL、
 FreeRTOS/CMSIS-RTOS2、CMake/Ninja 和 GNU Arm 工具链。
@@ -18,6 +18,36 @@ CAN 诊断和 LED 指示保留；反馈达到 100 ms 未更新时，仅对应电
 硬件恢复后，活动电机任意一台新反馈可恢复总线发送；逐轮检查恢复反馈掩码，未收到新反馈的轮保持零电流，不阻塞其他轮。
 若已触发反馈离线等故障停机，恢复通信不自动重新使能；HAL 恢复失败则停止重试，诊断显示 FAILED。
 已实现 X 型麦轮平移、旋转混合与四轮速度闭环。轮位、安装方向和遥控轴正方向待实车标定。LED 绿色只表示通信在线。
+
+## CH9 舵机遥控（当前本机已启用）
+
+SERVO_RC_ENABLE=1、SERVO_RC_TELEMETRY_ENABLE=1，配置位于 App/Inc/servo_config.h。
+CH9=+1 关闭舵机遥控；0 时 CH2/CH4/CH1 分别控制 ID1/2/3；-1 时 CH2/CH4 控制 ID4/5。
+摇杆增量控制，±60 死区、每轴初始最大 30°/s；回中保持目标，不回中位。上电先见 +1，
+进入组后相关轴回中 300 ms，在线且位置模式有效的舵机从回读位置独立启用。没有底盘 yaw 舵机。
+切组/关闭/遥控失联取消待发运动并尽力发送停止，保留扭矩；单轴离线或手动停止/暂停/释力后锁住该轴，
+需 CH9 回 +1 再重新启用。停止通过总线发送，通信中断时不能保证实际停止。机械限位和正方向尚待实机标定。
+底盘仍按 CH7/CH8 运行，同一摇杆可能同时驱动底盘和舵机。
+
+USB 自动输出按 CH9 切换：+1 使用原电机 200 Hz 协议，0/-1 仅输出五台回读角度的 50 Hz 五列 CSV。
+位置查询仍为每台约 20 Hz，50 Hz 输出可能重复最新测量；无有效反馈填 -1.000。
+270°模式按 (P-500)×0.135° 换算，180°模式按 (P-500)×0.09°；这是协议角度，不是机械零位角度。
+手动诊断期间暂停 CSV。关闭 SERVO_RC_ENABLE 保留原 USB 手动功能；仅关闭 SERVO_RC_TELEMETRY_ENABLE
+则舵机遥控继续工作，USB 恢复原电机回传。Flash 模式须同时关闭电机与舵机自动回传。
+复用 ServoBusTask 和 UsbTask，未增加任务或修改 .ioc。详见 SERVO_INTEGRATION.md。
+
+## 机械臂速度逆运动学预备模块
+
+已加入默认关闭的速度IK模块，说明见 [ARM_KINEMATICS.md](ARM_KINEMATICS.md)。
+App/Inc/arm_config.h 中 ARM_VELOCITY_IK_ENABLE=0、ARM_VELOCITY_IK_OUTPUT_ENABLE=0，机械标定也默认无效。
+主要参数为 SERVO_MAX_SPEED_DEG_S=30 和 ARM_MAX_LINEAR_SPEED_MM_S=50；均为软件允许值，不是舵机硬件极限。
+控制q3/q4轴交点的平面速度、俯仰、腕滚转，夹爪独立；TCP后续定义，不绑定摇杆或拨杆。
+逻辑肩/肘/腕俯仰/腕滚转/爪默认映射总线ID 3/2/1/4/5，不改变已有CH9映射。
+未限幅速度解超关节上限、任务残差过大或其它故障均停止整组并锁存，USB以5Hz持续报告ARM_ERROR。
+LINEAR_SPEED_LIMIT和JOINT_SPEED_LIMIT只能通过MCU复位清除；重复模块/驱动初始化不能绕过，其他错误仍保留软件清错。
+末端限速参数旁已有当前208.544/150.339 mm/s理论上界的公式与适用条件，实际配置仍为50 mm/s。
+本模块未启用时原控制保持；启用实际IK输出必须关闭SERVO_RC_ENABLE并完成PMOD/零位/方向/传动比/限位标定。
+速度 IK 复用现有任务。本版本包含速度 IK 预备模块，实板验证待完成。
 
 ## 新对话从这里开始
 
@@ -100,7 +130,7 @@ Flash JEDEC ID、实际擦写、任务栈高水位、四轮方向和时序仍需
 - 当前方向掩码为 0x0A（反转 ID2、ID4），对单轮、四轮同速和麦轮模式均生效。
 - 配置轮位为左前 ID1、右前 ID2、左后 ID3、右后 ID4；这是程序约定，仍需与实车接线和安装方向核对。
 
-Flash 离线日志仅支持 FOUR，默认关闭；开启日志前须将 MOTOR_DEBUG_TELEMETRY 置 0。
+Flash 离线日志仅支持 FOUR，默认关闭；开启日志前须将 MOTOR_DEBUG_TELEMETRY 和 SERVO_RC_TELEMETRY_ENABLE 均置 0。
 日志直接读取现有控制快照：四台均 RUNNING 且任意轮目标非零即开始，正负均可，不依赖摇杆边沿。
 四路目标全零立即结束；四台在线、RUNNING 且首次同时达到各自当前目标后 5 秒结束，计时不重置。
 拨杆关闭、遥控失联、控制快照超时、全部退出 RUNNING 或存储异常也会结束；单轮故障不结束整组记录。
@@ -139,7 +169,7 @@ MLG2 每条 32 字节：四个 int32 历史目标（0.001 rpm）、四个 int16 
 
 新三个 Flash 任务在 `freertos.c` 的 USER CODE 中调用 `FlashTasks_Create()` 条件创建，
 并非 `.ioc` 原有 Tasks01 中的无条件任务。两个业务开关在 [flash_tasks_config.h](App/Inc/flash_tasks_config.h)，
-默认均为 0；重新开启 Flash 功能前先将 MOTOR_DEBUG_TELEMETRY 置 0，避免两种输出混用。
+默认均为 0；重新开启 Flash 功能前先将 MOTOR_DEBUG_TELEMETRY 和 SERVO_RC_TELEMETRY_ENABLE 均置 0，避免两种输出混用。
 编译期会拒绝同时启用实时回传和 Flash 任务。Flash 关闭不会擦除已有数据。
 本次没有新增任务；MonitorTask 保持 256 words，格式化和回传放在 UsbTask 中。
 
@@ -204,6 +234,9 @@ python tests/run_usb_serial_tests.py
 python tests/run_flash_tests.py
 python tests/run_motor_debug_tests.py --cc "E:/CLion/CLion 2026.2.2/bin/mingw/bin/gcc.exe"
 python tests/run_servo_tests.py
+python tests/run_servo_rc_tests.py
+python tests/run_arm_kinematics_tests.py
+python tests/run_arm_velocity_tests.py
 python tests/run_imu_filter_tests.py
 python tests/run_imu_pipeline_tests.py
 ```
@@ -250,7 +283,8 @@ USB/Flash 测试脚本支持 `--cc <主机gcc路径>`；driver 脚本目前使�
 远端仓库：[rm-campus/mc-02](https://github.com/rm-campus/mc-02)，远端固件目录为
 `stm32project/rm_campus/`，不是仓库根目录。
 
-本机电机/Flash 功能此前发布为 main 的 `b21086d`。
+本机电机/Flash 功能此前发布为 main 的 `b21086d`；UART7 驱动及麦轮集成已发布为 `7704872`。
+2026-11-24 发布版本包含 CH9 舵机遥控、五列角度回传及默认关闭的机械臂速度 IK。
 2026-11-16 已合入远端 `1bf9e46`、`48dd9c2`：CH8 模式切换、左杆平移、CH1 旋转、
 ID2/4 方向反转、±60 死区及 9/12 列实时回传。CH8 运行中直接切换，不重新要求回中；
 单轮/同速模式运行时仍按 CH2 线性映射，±60 仅用于这两种模式的启用前回中。

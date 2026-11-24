@@ -75,6 +75,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/servo_uart.c
     Bsp/Src/zp_servo.c
     App/Src/servo_app.c
+    Algorithm/Src/arm_kinematics.c
+    App/Src/arm_velocity.c
+    App/Src/arm_usb.c
+    App/Src/servo_rc.c
+    App/Src/servo_rc_usb.c
     App/Src/servo_usb.c
     Bsp/Src/led.c
     Bsp/Src/usb_serial.c

@@ -3,6 +3,8 @@
 #include "flash_tasks_config.h"
 #include "motor_status_usb.h"
 #include "servo_usb.h"
+#include "servo_rc_usb.h"
+#include "arm_usb.h"
 
 /* 两种输出协议分时使用，防止重新开启 Flash 后调试帧夹入 Flash 回传。 */
 #if MOTOR_DEBUG_TELEMETRY && FLASH_TASKS_ENABLE
@@ -41,7 +43,7 @@ static UsbSerialResult send_current(const void *data, uint16_t length)
     Campus_CopyMotorDebug(&d);
     UsbSerialResult result = USB_SERIAL_NOT_READY;
     if (usb.ready && usb.session_id == s_session &&
-        streaming(&d) && d.run_id == s_run) {
+        streaming(&d) && d.run_id == s_run && !ServoRcUsb_Selected() && !ServoRcUsb_Busy() && !ArmUsb_Busy()) {
         result = UsbSerial_SendTracked(data, length, &s_ticket);
     }
     taskEXIT_CRITICAL();
@@ -55,6 +57,7 @@ static int milli(float value)
 
 void MotorDebugUsb_Process(void)
 {
+    if (ServoRcUsb_Selected() || ServoRcUsb_Busy() || ArmUsb_Busy()) { s_active=false;return; }
     if (MotorStatusUsb_Busy() || ServoUsb_Busy()) return;
     CampusMotorDebugSnapshot d;
     UsbSerialStatus usb;

@@ -1,6 +1,7 @@
 #include "servo_usb.h"
 #if SERVO_USB_DEBUG_ENABLE
 #include "servo_app.h"
+#include "servo_rc.h"
 #include "flash_tasks.h"
 #include "usb_serial.h"
 #include "FreeRTOS.h"
@@ -42,6 +43,11 @@ static unsigned report(char *out)
         (unsigned long)s.malformed,(unsigned long)s.unexpected,(unsigned long)s.coalesced,(unsigned long)s.cancelled);
     if(n<0 || n>= (int)REPORT_SIZE)return 0;
     unsigned used=(unsigned)n;
+    ServoRcStatus rc;ServoRc_CopyStatus(&rc);
+    n=snprintf(out+used,REPORT_SIZE-used,"RC enabled=%u config_valid=%u off_seen=%u selected=%u armed=%u fault=%u\n",
+        SERVO_RC_ENABLE && SERVO_BUS_ENABLE,rc.config_valid,rc.off_seen,rc.selected_mask,rc.armed_mask,rc.fault_mask);
+    if(n<0 || (unsigned)n>=REPORT_SIZE-used)return 0;
+    used+=(unsigned)n;
     for(unsigned i=0;i<SERVO_COUNT;++i) {
         const ServoState *d=&s.device[i]; const ServoConfig *c=Servo_GetConfig(i);
         char position[12]="NA",age[12]="NA";

@@ -11,12 +11,13 @@
 | MOTOR_DEBUG_MODE | SINGLE 或 FOUR，默认 FOUR | FOUR |
 | MOTOR_DEBUG_ENABLE | 1 | 1 |
 | MOTOR_DEBUG_TELEMETRY | 1 | 0 |
+| SERVO_RC_TELEMETRY_ENABLE | 1 | 0 |
 | MOTOR_SPEED_LOG_TASK_ENABLE | 0 | 1 |
 | FLASH_TEST_TASK_ENABLE | 0 | 0 |
 
 宏位于 App/Inc/motor_debug_config.h 和 flash_tasks_config.h。改宏后重新编译烧录。
 日志开启时选择 SINGLE 会编译报错；任一 Flash 功能与实时回传同时开启也会报错。
-实时单轮仍四列、四轮为九列，均为 200 Hz；Flash 日志是独立的 100 Hz 八列回放。
+实时单轮四列、四轮同速九列或麦轮十二列，均为 200 Hz；CH9 舵机组选择时改为 50 Hz 五列角度。Flash 日志是独立的 100 Hz 八列回放。
 Flash 测试任务独立开关保留，可与日志共用服务任务，日志本身不需要开启测试任务。
 
 没有新增 RTOS 任务，也不改 .ioc。FlashServiceTask 是实际访问 Flash 的唯一任务，BelowNormal、512 words；
@@ -118,3 +119,5 @@ Flash 事务占用 USB 时普通 status/提示可能被抑制，motor_status 等
 另验证 10 秒 1000 条/100 Hz 回放，以及旧 50 Hz MLG2 的读取、原速回放、擦除中重启与新记录周期恢复。
 还需运行 motor_debug 回归以验证实时单轮四列/四轮九列及 200 Hz 行为；分别编译实时与离线配置。
 主机测试与编译不等同上板验收，实际 Flash 擦写、USB 绘图和任务栈高水位仍需实机验证。
+
+CH9 舵机遥控接入后，离线日志构建还须添加 `-DSERVO_RC_TELEMETRY_ENABLE=0`，避免五列角度回传混入日志输出。舵机遥控本身可继续启用。

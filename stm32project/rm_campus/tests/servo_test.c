@@ -12,7 +12,7 @@
 
 UART_HandleTypeDef huart7={7},huart5={5};
 static uint32_t tick,mask; static unsigned depth;
-static bool receive_mode,tx_pending,drop_tc,fail_tx;
+static bool receive_mode,tx_pending,drop_tc,drop_move_tc,fail_tx;
 static uint8_t *rx_byte;
 static char tx[65]; static uint32_t tx_due;
 static unsigned tx_count,moves,reply_mask=31;
@@ -39,7 +39,7 @@ int HAL_UART_Receive_IT(UART_HandleTypeDef *h,uint8_t *p,uint16_t n){assert(h==&
 int HAL_UART_Transmit_IT(UART_HandleTypeDef *h,const uint8_t *p,uint16_t n)
 {
     assert(h==&huart7&&!receive_mode&&!tx_pending&&n<sizeof(tx));
-    if(fail_tx){fail_tx=false;return HAL_ERROR;}
+    if(fail_tx && n==15U && p[9]=='T'){fail_tx=false;return HAL_ERROR;} /* Fail the motion, not an intervening due query. */
     memcpy(tx,p,n);tx[n]=0;tx_pending=true;tx_due=tick+2;++tx_count;
     assert(!strstr(tx,"#255")&&!strstr(tx,"PBD")&&!strstr(tx,"PP"));
     return HAL_OK;
@@ -50,7 +50,7 @@ static void feed(const char *p)
 }
 static void bus_step(void)
 {
-    if(!tx_pending||drop_tc||(int32_t)(tick-tx_due)<0)return;
+    if(!tx_pending||drop_tc||(drop_move_tc && strlen(tx)==15U && tx[9]=='T')||(int32_t)(tick-tx_due)<0)return;
     tx_pending=false;HAL_UART_TxCpltCallback(&huart7);assert(receive_mode&&rx_byte);
     unsigned id=0,p=0,ms=0; assert(sscanf(tx,"#%3u",&id)==1&&id>=1&&id<=5);
     if(sscanf(tx,"#%3uP%4uT%4u!",&id,&p,&ms)==3) { positions[id-1]=(uint16_t)p;++moves;return; }

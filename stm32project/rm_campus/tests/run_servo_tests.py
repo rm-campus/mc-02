@@ -50,7 +50,7 @@ def main():
                  'App/Src/servo_usb.c','App/Src/flash_tasks.c','App/Src/usb_app.c','App/Src/motor_debug_usb.c']
         for enable in (0,1):
             exe=folder/f'servo{enable}.exe'
-            subprocess.run([a.cc,'-std=c11','-O2','-Wall','-Wextra','-Werror',f'-DSERVO_BUS_ENABLE={enable}',
+            subprocess.run([a.cc,'-std=c11','-DSERVO_RC_ENABLE=0','-O2','-Wall','-Wextra','-Werror',f'-DSERVO_BUS_ENABLE={enable}',
                 '-I'+str(folder),'-I'+str(root/'App/Inc'),'-I'+str(root/'Bsp/Inc'),
                 *[str(root/s) for s in sources],'-lm','-o',str(exe)],check=True,timeout=30)
             subprocess.run([str(exe)],check=True,timeout=20)

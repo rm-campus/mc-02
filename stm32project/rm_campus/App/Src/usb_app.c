@@ -4,6 +4,8 @@
 #include "motor_debug_usb.h"
 #include "motor_status_usb.h"
 #include "servo_usb.h"
+#include "servo_rc_usb.h"
+#include "arm_usb.h"
 
 #define USB_APP_RX_CHUNK 256U
 
@@ -27,6 +29,8 @@ void Campus_UsbProcess(void)
     }
     MotorStatusUsb_Process();
     ServoUsb_Process();
+    ArmUsb_Process();
+    ServoRcUsb_Process();
     MotorDebugUsb_Process();
     UsbSerial_Process();
 }
