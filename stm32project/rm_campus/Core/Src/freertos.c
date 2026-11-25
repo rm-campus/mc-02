@@ -157,6 +157,13 @@ void vApplicationMallocFailedHook(void)
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
+#if SERVO_STATUS_ONLY
+  /* 不依赖遥控器：USB 接收状态查询，ServoBusTask 独占 UART7 轮询五台舵机。 */
+  UsbTaskHandle = osThreadNew(StartUsbTask, NULL, &UsbTask_attributes);
+  ServoBusTaskHandle = osThreadNew(StartServoBusTask, NULL, &ServoBusTask_attributes);
+  if (UsbTaskHandle == NULL || ServoBusTaskHandle == NULL) Error_Handler();
+  return;
+#endif
 #if ROBOT_CONTROL_ENABLE
   /* 整机模式独占 CAN、UART7、LED 和蜂鸣器，只创建控制所需任务。 */
   RcTaskHandle = osThreadNew(StartRcTask, NULL, &RcTask_attributes);

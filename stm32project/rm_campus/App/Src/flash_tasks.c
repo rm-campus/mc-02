@@ -78,6 +78,7 @@ static void dispatch_line(void)
     while (length && (s_line[length - 1U] == '\r' || s_line[length - 1U] == '\n')) --length;
     if (length == 0U) return;
     if (ServoUsb_Dispatch(s_line,length)) return;
+#if !SERVO_STATUS_ONLY
     if (length == 12U && memcmp(s_line, "motor_status", 12U) == 0) {
         MotorStatusUsb_Request();
         return;
@@ -121,6 +122,7 @@ static void dispatch_line(void)
         if (n > 0 && (unsigned)n < sizeof(message)) FlashTasks_Reply(message);
     }
     else FlashTasks_Reply("COMMANDS flash:<data>, read, status, clear, motor_status; end with LF\n");
+#endif
 #endif
 }
 

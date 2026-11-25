@@ -3,7 +3,7 @@
 #define MOTOR_DEBUG_CONFIG_H
 #include "robot_control_config.h"
 #ifndef MOTOR_DEBUG_ENABLE
-#define MOTOR_DEBUG_ENABLE (!ROBOT_CONTROL_ENABLE)
+#define MOTOR_DEBUG_ENABLE (!ROBOT_CONTROL_ENABLE && !SERVO_STATUS_ONLY)
 #endif
 #define MOTOR_DEBUG_MODE_SINGLE 0
 #define MOTOR_DEBUG_MODE_FOUR 1
@@ -86,10 +86,10 @@
 #define MOTOR_DEBUG_CURRENT_LIMIT 9.5f
 #define MOTOR_DEBUG_INTEGRAL_LIMIT 1.50f
 #ifndef MOTOR_DEBUG_TELEMETRY
-#define MOTOR_DEBUG_TELEMETRY (!ROBOT_CONTROL_ENABLE)
+#define MOTOR_DEBUG_TELEMETRY (!ROBOT_CONTROL_ENABLE && !SERVO_STATUS_ONLY)
 #endif
-#if ROBOT_CONTROL_ENABLE && (MOTOR_DEBUG_ENABLE || MOTOR_DEBUG_TELEMETRY)
-#error "Robot mode and motor bench debugging/telemetry are exclusive"
+#if (ROBOT_CONTROL_ENABLE || SERVO_STATUS_ONLY) && (MOTOR_DEBUG_ENABLE || MOTOR_DEBUG_TELEMETRY)
+#error "Selected firmware excludes motor bench debugging and telemetry"
 #endif
 #define MOTOR_DEBUG_TELEMETRY_PERIOD_MS 5U
 /* CH7 最左拨杆：+1 关闭确认，-1 启用。CH2 左摇杆竖直。 */

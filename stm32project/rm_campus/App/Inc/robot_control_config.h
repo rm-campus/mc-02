@@ -1,9 +1,20 @@
 #ifndef ROBOT_CONTROL_CONFIG_H
 #define ROBOT_CONTROL_CONFIG_H
 
+/* Debug/Release 预设默认开启舵机监测；servo_config.h 单独控制点动测试。 */
+#ifndef SERVO_STATUS_ONLY
+#define SERVO_STATUS_ONLY 0
+#endif
+#if SERVO_STATUS_ONLY != 0 && SERVO_STATUS_ONLY != 1
+#error "SERVO_STATUS_ONLY must be 0 or 1"
+#endif
+
 /* 置 1 选择整机遥控，置 0 使用原调试配置。RobotControl 构建预设单独置 1。 */
 #ifndef ROBOT_CONTROL_ENABLE
 #define ROBOT_CONTROL_ENABLE 0
+#endif
+#if SERVO_STATUS_ONLY && (ROBOT_CONTROL_ENABLE || defined(SERVO_ID_SETUP))
+#error "Servo status monitor is exclusive with robot control and ID setup"
 #endif
 #if ROBOT_CONTROL_ENABLE != 0 && ROBOT_CONTROL_ENABLE != 1
 #error "ROBOT_CONTROL_ENABLE must be 0 or 1"

@@ -7,6 +7,11 @@
 #include "task.h"
 #include "cmsis_os2.h"
 #include <string.h>
+#if SERVO_JOG_TEST_ENABLE
+#include "usb_serial.h"
+#include <math.h>
+#include <stdlib.h>
+#endif
 
 static const ServoConfig configs[SERVO_COUNT] = {SERVO_DEVICE_TABLE};
 typedef struct { uint8_t slot; ZpOperation op; uint16_t position, time_ms; uint32_t ticket; ServoControlOwner owner; } Request;
@@ -17,6 +22,9 @@ static uint32_t sequence;
 static ServoSnapshot work, published;
 static uint32_t next_poll[SERVO_COUNT], next_move[SERVO_COUNT], next_slot, deadline, guard, request_started;
 static uint8_t boot_phase[SERVO_COUNT], poll_slot;
+static uint32_t last_metadata_retry;
+static unsigned metadata_cursor;
+static bool metadata_retry_current, refresh_after_retry;
 static Phase phase;
 static bool auto_request, hardware_ready;
 static char line[ZP_FRAME_MAX];
@@ -42,6 +50,162 @@ static int slot_for(uint8_t id)
     return -1;
 }
 const ServoConfig *Servo_GetConfig(unsigned i) { return i<SERVO_COUNT ? &configs[i] : NULL; }
+#if SERVO_JOG_TEST_ENABLE
+typedef enum { JOG_IDLE, JOG_CHECK_LINK, JOG_MODE, JOG_BASE, JOG_MOVE, JOG_VERIFY, JOG_COMPLETE } JogPhase;
+static struct {
+    JogPhase phase;
+    uint8_t slot, direction, mode;
+    uint32_t session, expires, verify_after;
+    ServoJogReport report;
+} jog;
+/* 已取出的 UART 事务即使跨 USB 断线结束，也不能推进新会话的点动。 */
+static uint32_t jog_generation, wire_generation;
+
+ServoResult ServoJog_Start(uint8_t id,uint8_t direction,uint32_t ticket,uint32_t session)
+{
+    int slot=slot_for(id);
+    if(slot<0 || !ticket || (direction!=1U && direction!=2U))return SERVO_INVALID;
+    taskENTER_CRITICAL();
+    const ServoState *s=&published.device[slot];
+    uint32_t now=HAL_GetTick();
+    ServoResult result=SERVO_QUEUED;
+    if(jog.phase!=JOG_IDLE)result=SERVO_BUSY;
+    else if(!published.initialized || !s->position_seen)result=SERVO_OFFLINE;
+    else {
+        if(++jog_generation==0U)++jog_generation;
+        jog.slot=(uint8_t)slot;
+        jog.direction=direction;
+        jog.session=session;
+        jog.mode=s->mode_valid?s->mode:0;
+        jog.report=(ServoJogReport){.id=id,.ticket=ticket};
+        if(!s->online || now-s->position_ms>=SERVO_POSITION_STALE_MS)jog.phase=JOG_CHECK_LINK;
+        else jog.phase=jog.mode ? JOG_BASE : JOG_MODE;
+        jog.expires=now+SERVO_MODE_PROBE_TIMEOUT_MS+SERVO_JOG_SETTLE_TIMEOUT_MS;
+    }
+    taskEXIT_CRITICAL();
+    return result;
+}
+
+bool ServoJog_TakeResult(uint32_t ticket,ServoJogReport *out)
+{
+    taskENTER_CRITICAL();
+    bool done=out && jog.phase==JOG_COMPLETE && ticket==jog.report.ticket;
+    if(done) { *out=jog.report; jog.phase=JOG_IDLE; }
+    taskEXIT_CRITICAL();
+    return done;
+}
+
+void ServoJog_Cancel(void)
+{
+    taskENTER_CRITICAL();
+    jog.phase=JOG_IDLE;
+    taskEXIT_CRITICAL();
+}
+
+/* 以下逻辑仅在 ServoBusTask 中运行；USB 任务通过上面三个短临界区交接。 */
+static void jog_done(const char *result)
+{
+    jog.report.result=result;
+    jog.phase=JOG_COMPLETE;
+}
+
+static bool jog_session_ready(void)
+{
+    UsbSerialStatus usb;
+    UsbSerial_GetStatus(&usb);
+    return usb.ready && usb.session_id==jog.session;
+}
+
+static void jog_tick(uint32_t now)
+{
+    if(jog.phase==JOG_IDLE || jog.phase==JOG_COMPLETE)return;
+    if(!jog_session_ready()) { jog_done("DISCONNECTED"); return; }
+    if(due(now,jog.expires)) {
+        const char *reason="TIMEOUT";
+        if(jog.phase==JOG_MODE)reason="MODE_UNKNOWN";
+        if(jog.phase==JOG_VERIFY && jog.report.actual)reason="NOT_REACHED";
+        jog_done(reason);
+    }
+}
+
+static bool take_jog_request(void)
+{
+    wire_generation=0;
+    ZpOperation op;
+    switch(jog.phase) {
+    case JOG_CHECK_LINK: op=ZP_POSITION; break;
+    case JOG_MODE: op=ZP_MODE; break;
+    case JOG_BASE:
+        if(jog.mode<1U || jog.mode>4U) { jog_done("BAD_MODE"); return false; }
+        op=ZP_POSITION;
+        break;
+    case JOG_MOVE: op=ZP_MOVE; break;
+    default: return false;
+    }
+    current=(Request){.slot=jog.slot,.op=op,.position=jog.report.target,.time_ms=SERVO_JOG_MOVE_MS,
+                      .ticket=op==ZP_MOVE?jog.report.ticket:0U};
+    wire_generation=jog_generation;
+    auto_request=false;
+    return true;
+}
+
+static void finish_jog_request(ServoResult result,uint32_t now,const ZpReply *reply)
+{
+    if(jog.phase==JOG_IDLE || jog.phase==JOG_COMPLETE || current.slot!=jog.slot)return;
+    const unsigned span=jog.mode<=2U?270U:180U;
+    /* 只有运动帧发送完成、计划运动时间届满后新发起的位置查询才可确认到位。 */
+    if(jog.phase==JOG_VERIFY && auto_request && current.op==ZP_POSITION &&
+       result==SERVO_OK && reply && due(request_started,jog.verify_after)) {
+        jog.report.actual=reply->value;
+        unsigned error=(unsigned)abs((int)jog.report.actual-(int)jog.report.target);
+        unsigned step=(unsigned)abs((int)jog.report.start-(int)jog.report.target);
+        if(error<step && error*span<=2000.0f*SERVO_JOG_TOLERANCE_DEG)
+            jog_done("DONE");
+        return;
+    }
+    if(!wire_generation || wire_generation!=jog_generation)return;
+    if(result!=SERVO_OK) {
+        const char *why=Servo_ResultName(result);
+        if(result==SERVO_TIMEOUT && phase==TX)why="TX_TIMEOUT";
+        else if(result==SERVO_TIMEOUT && jog.phase==JOG_MODE)why="MODE_UNKNOWN";
+        else if(result==SERVO_TIMEOUT && jog.phase==JOG_CHECK_LINK)why="OFFLINE";
+        jog_done(why);
+        return;
+    }
+    switch(jog.phase) {
+    case JOG_CHECK_LINK:
+        /* 单线轮询/长模式应答可能使缓存过期，收到位置后重新确认模式。 */
+        jog.mode=work.device[jog.slot].mode_valid?work.device[jog.slot].mode:0U;
+        jog.phase=jog.mode ? JOG_BASE : JOG_MODE;
+        break;
+    case JOG_MODE:
+        jog.mode=(uint8_t)reply->value;
+        jog.phase=JOG_BASE;
+        break;
+    case JOG_BASE: {
+        jog.report.start=reply->value;
+        const float degrees=(float)SERVO_JOG_STEP_DEG;
+        if(!isfinite(degrees) || degrees<=0.0f || degrees>(float)span) { jog_done("BAD_CONFIG"); break; }
+        int step=(int)lroundf(degrees*2000.0f/(float)span);
+        if(step==0) { jog_done("BAD_CONFIG"); break; }
+        bool increase=(jog.direction==1U)==((jog.mode&1U)!=0U);
+        int target=(int)jog.report.start+(increase?step:-step);
+        const ServoConfig *c=&configs[jog.slot];
+        if(jog.report.start<c->minimum || jog.report.start>c->maximum ||
+           target<c->minimum || target>c->maximum) { jog_done("LIMIT"); break; }
+        jog.report.target=(uint16_t)target;
+        jog.phase=JOG_MOVE;
+        break;
+    }
+    case JOG_MOVE:
+        jog.verify_after=now+SERVO_JOG_MOVE_MS;
+        jog.expires=jog.verify_after+SERVO_JOG_SETTLE_TIMEOUT_MS;
+        jog.phase=JOG_VERIFY;
+        break;
+    default: break;
+    }
+}
+#endif
 const char *Servo_ResultName(ServoResult r)
 {
     static const char *names[]={"OK","QUEUED","BUSY","INVALID","RANGE","OFFLINE","BAD_MODE",
@@ -110,6 +274,7 @@ static bool motion_pending(ServoControlOwner owner)
 }
 bool Servo_ControlClaim(ServoControlOwner owner,uint8_t slots)
 {
+    if(SERVO_STATUS_ONLY)return false;
     if(!owner_valid(owner) || (slots&~valid_slots()))return false;
     if(!slots)return Servo_ControlRelease(owner);
     if(!SERVO_BUS_ENABLE)return false;
@@ -139,7 +304,7 @@ bool Servo_ControlRelease(ServoControlOwner owner)
 }
 void Servo_ControlStopMask(ServoControlOwner owner,uint8_t slots)
 {
-    if(!owner_valid(owner))return;
+    if(SERVO_STATUS_ONLY || !owner_valid(owner))return;
     taskENTER_CRITICAL();
     if(control_owner==SERVO_OWNER_NONE || control_owner==owner) {
         slots&=valid_slots();
@@ -202,7 +367,7 @@ static uint32_t next_ticket(void) { if(++sequence==0U)++sequence;return sequence
 static ServoResult enqueue(uint8_t id,ZpOperation op,uint16_t p,uint16_t ms,uint32_t *ticket,ServoControlOwner owner)
 {
     if(ticket)*ticket=0;
-    if(!SERVO_BUS_ENABLE)return SERVO_DISABLED;
+    if(SERVO_STATUS_ONLY || !SERVO_BUS_ENABLE)return SERVO_DISABLED;
     int slot=slot_for(id);if(slot<0)return SERVO_INVALID;
     taskENTER_CRITICAL();
     ServoState *s=&published.device[slot];
@@ -236,7 +401,7 @@ static ServoResult enqueue(uint8_t id,ZpOperation op,uint16_t p,uint16_t ms,uint
 ServoResult Servo_ControlMoveGroup(ServoControlOwner owner,const uint8_t *ids,
     const uint16_t *positions,const uint16_t *times_ms,unsigned count)
 {
-    if(!SERVO_BUS_ENABLE)return SERVO_DISABLED;
+    if(SERVO_STATUS_ONLY || !SERVO_BUS_ENABLE)return SERVO_DISABLED;
     if(!owner_valid(owner) || !ids || !positions || !times_ms || !count || count>SERVO_COUNT)return SERVO_INVALID;
     uint8_t slots[SERVO_COUNT],seen=0;int replacements[SERVO_COUNT];unsigned needed=0;
     taskENTER_CRITICAL();uint32_t now=HAL_GetTick();
@@ -280,7 +445,7 @@ ServoResult Servo_RequestPosition(uint8_t id,uint32_t *t) { return enqueue(id,ZP
 static ServoResult request_modes(uint8_t position_mode, int probe_slot, uint32_t *ticket)
 {
     if(ticket)*ticket=0U;
-    if(!SERVO_BUS_ENABLE)return SERVO_DISABLED;
+    if(SERVO_STATUS_ONLY || !SERVO_BUS_ENABLE)return SERVO_DISABLED;
     if(!ticket)return SERVO_INVALID;
     taskENTER_CRITICAL();
     ServoResult result=SERVO_QUEUED;
@@ -337,6 +502,10 @@ ServoResult Servo_RcMovePulse(uint8_t id,uint16_t p,uint16_t ms,uint32_t *t) { r
 
 bool Servo_Init(void)
 {
+#if SERVO_JOG_TEST_ENABLE
+    ServoJog_Cancel();
+    wire_generation=0;
+#endif
     thread=osThreadGetId();
     memset(&work,0,sizeof(work)); work.enabled=SERVO_BUS_ENABLE!=0;
     uint32_t now=HAL_GetTick();
@@ -348,6 +517,7 @@ bool Servo_Init(void)
     ServoRc_Init(now);
     Arm_Init(now);
     phase=IDLE; line_length=0; poll_slot=0; next_slot=guard=now;
+    last_metadata_retry=now; metadata_cursor=0; metadata_retry_current=false; refresh_after_retry=false;
     for(unsigned i=0;i<SERVO_COUNT;++i) {
         work.device[i].id=configs[i].id;
         next_poll[i]=next_move[i]=now; boot_phase[i]=0;
@@ -408,7 +578,9 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
         }
         taskEXIT_CRITICAL();
     }
-    if(result!=SERVO_OK && !mode_current) {
+    /* 可选后台查询缺应答只计超时；真正的通信错误和位置故障仍走原控制保护。 */
+    bool missing_metadata=metadata_retry_current && phase==REPLY && result==SERVO_TIMEOUT;
+    if(result!=SERVO_OK && !mode_current && !missing_metadata) {
         taskENTER_CRITICAL();arm_failure(current.slot);taskEXIT_CRITICAL();
     }
     if(result==SERVO_OK) {
@@ -432,17 +604,22 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
     } else {
         if(result==SERVO_TIMEOUT)++s->timeouts;
         if(current.op==ZP_POSITION && s->failures<255U)++s->failures;
+        if(auto_request && current.op==ZP_VERSION)s->version_valid=false;
     }
     if(auto_request && current.op!=ZP_POSITION && boot_phase[current.slot]<3U)++boot_phase[current.slot];
     /* Repeated movement commands must not postpone feedback polling indefinitely. */
-    if(!mode_current && current.op>=ZP_POSITION && current.op<=ZP_MODE)
+    if(!mode_current && !metadata_retry_current && current.op>=ZP_POSITION && current.op<=ZP_MODE)
         next_poll[current.slot]=s->failures>=SERVO_FAIL_LIMIT ? now+SERVO_OFFLINE_RETRY_MS : request_started+SERVO_POLL_PERIOD_MS;
+#if SERVO_JOG_TEST_ENABLE
+    finish_jog_request(result,now,reply);
+#endif
     if(mode_current) { finish_mode(result,now,reply); mode_current=false; }
     if(result!=SERVO_OK) {
         hardware_ready=ServoUart_Recover();
         guard=now+SERVO_RECOVERY_QUIET_MS;
     } else guard=now+SERVO_BUS_GAP_MS;
-    phase=IDLE; line_length=0;
+    if(metadata_retry_current)refresh_after_retry=true;
+    phase=IDLE; line_length=0; metadata_retry_current=false;
 }
 
 static void input_byte(uint8_t c,uint32_t now)
@@ -466,9 +643,53 @@ static void input_byte(uint8_t c,uint32_t now)
     }
 }
 
+static bool take_metadata_retry(uint32_t now,uint32_t oldest_age)
+{
+    if(now-last_metadata_retry<SERVO_METADATA_RETRY_MS || mode_work.ticket || control_owner==SERVO_OWNER_ARM)
+        return false;
+#if SERVO_JOG_TEST_ENABLE
+    if(jog.phase!=JOG_IDLE && jog.phase!=JOG_COMPLETE)return false;
+#endif
+    /* 跨 ID 和字段轮换；一个模式始终不回复时，其他模式和版本仍有机会。 */
+    const unsigned fields=2U*SERVO_COUNT;
+    for(unsigned n=0;n<fields;++n) {
+        unsigned field=(metadata_cursor+n)%fields;
+        unsigned slot=field%SERVO_COUNT;
+        const ServoState *s=&work.device[slot];
+        if(!s->online || boot_phase[slot]!=3U)continue;
+        bool mode=field<SERVO_COUNT;
+        if(mode?s->mode_valid:s->version_valid)continue;
+        /* 单线一次只能等一个应答，先给在线位置预留超时恢复和下一个轮询槽。 */
+        uint32_t timeout=mode?SERVO_MODE_REPLY_TIMEOUT_MS:SERVO_REPLY_TIMEOUT_MS;
+        if(oldest_age+timeout+SERVO_RECOVERY_QUIET_MS+SERVO_POLL_SLOT_MS>=SERVO_POSITION_STALE_MS)continue;
+        current=(Request){.slot=(uint8_t)slot,.op=mode?ZP_MODE:ZP_VERSION};
+        auto_request=true; metadata_retry_current=true;
+        metadata_cursor=(field+1U)%fields;
+        last_metadata_retry=now;
+        return true;
+    }
+    return false;
+}
+
 static bool take_poll(uint32_t now)
 {
     if(!due(now,next_slot))return false;
+    uint32_t oldest_age=0;
+    unsigned oldest=SERVO_COUNT;
+    for(unsigned i=0;i<SERVO_COUNT;++i) {
+        const ServoState *s=&work.device[i];
+        uint32_t age=now-s->position_ms;
+        if(s->online && age>oldest_age) { oldest=i; oldest_age=age; }
+    }
+    /* 只在后台补读占用总线后优先恢复实测位置；已不应答的轴保留原轮转顺序。 */
+    if(refresh_after_retry && oldest<SERVO_COUNT && oldest_age>=SERVO_POSITION_STALE_MS/2U &&
+       !work.device[oldest].failures && due(now,next_poll[oldest])) {
+        current=(Request){.slot=(uint8_t)oldest,.op=ZP_POSITION};
+        auto_request=true; next_slot=now+SERVO_POLL_SLOT_MS;
+        return true;
+    }
+    refresh_after_retry=false;
+    if(take_metadata_retry(now,oldest_age))return true;
     for(unsigned n=0;n<SERVO_COUNT;++n) {
         unsigned i=poll_slot; poll_slot=(uint8_t)((poll_slot+1U)%SERVO_COUNT);
         if(!due(now,next_poll[i]))continue;
@@ -498,6 +719,12 @@ static bool take_mode_request(uint32_t now)
 }
 static bool take_request(uint32_t now)
 {
+#if SERVO_JOG_TEST_ENABLE
+    /* 点动的少数显式事务与正常轮询共用 UART；等运动到位期间继续轮询五台。 */
+    return take_jog_request() || take_poll(now);
+#else
+    if(SERVO_STATUS_ONLY)return take_poll(now);
+#endif
     taskENTER_CRITICAL();
     int take=-1;
     for(unsigned i=0;i<queued;++i)
@@ -524,6 +751,9 @@ void Servo_Process(uint32_t now)
 {
     Arm_Process(now); /* 速度IK独立接收应用层指令；默认关闭。 */
     if(!work.initialized || !SERVO_BUS_ENABLE)return;
+#if SERVO_JOG_TEST_ENABLE
+    jog_tick(now);
+#endif
 #if ROBOT_CONTROL_ENABLE
     RobotServo_Process(now);
 #else
@@ -561,17 +791,28 @@ void Servo_Process(uint32_t now)
                     probe_tx_done_ms=p.tx_done_ms;
                     timeout=SERVO_MODE_PROBE_TIMEOUT_MS;
                 }
+#if SERVO_JOG_TEST_ENABLE
+                if(wire_generation)timeout=SERVO_MODE_PROBE_TIMEOUT_MS;
+#endif
             }
             deadline=p.tx_done_ms+timeout;
         }
     }
     uint8_t data[64];
-    for(unsigned batch=0;batch<4;++batch) {
+    /* TC 可能刚好发生在 TakeEvents 和读环之间。在任务确认 TC 前保留整个快回包。 */
+    for(unsigned batch=0;phase!=TX && batch<4;++batch) {
         uint16_t n=ServoUart_Read(data,sizeof(data));
         for(unsigned i=0;i<n;++i)input_byte(data[i],now);
         if(n<sizeof(data))break;
     }
-    if(phase!=IDLE && due(now,deadline))finish(SERVO_TIMEOUT,now,NULL);
+    if(phase!=IDLE && due(now,deadline)) {
+        if(phase==TX) {
+            /* 到期边界再看中断侧状态：已发生的 TC/错误留给下一轮取事件和读环。 */
+            ServoUartStatus uart;
+            ServoUart_CopyStatus(&uart);
+            if(uart.ready && uart.transmitting)finish(SERVO_TIMEOUT,now,NULL);
+        } else finish(SERVO_TIMEOUT,now,NULL);
+    }
     if(phase==IDLE && mode_work.ticket && due(now,mode_deadline)) {
         /* A UART that never recovers must still produce a finite status report. */
         while(mode_slot<mode_end_slot)mode_work.result[mode_slot++]=SERVO_TIMEOUT;
@@ -592,6 +833,9 @@ void Servo_Process(uint32_t now)
                  (current.owner==SERVO_OWNER_ARM && control_inhibited[current.owner])))finish(SERVO_BUSY,now,NULL);
             else if(motion && (!s->online || (uint32_t)(now-s->position_ms)>=SERVO_POSITION_STALE_MS))finish(SERVO_OFFLINE,now,NULL);
             else if(current.op==ZP_MOVE && (!s->mode_valid || s->mode<1U || s->mode>4U))finish(SERVO_BAD_MODE,now,NULL);
+#if SERVO_JOG_TEST_ENABLE
+            else if(current.op==ZP_MOVE && s->mode!=jog.mode)finish(SERVO_BAD_MODE,now,NULL);
+#endif
             else {
                 char frame[ZP_FRAME_MAX];
                 size_t n=Zp_Build(frame,sizeof(frame),current.op,s->id,current.position,current.time_ms);
@@ -604,6 +848,22 @@ void Servo_Process(uint32_t now)
                 taskEXIT_CRITICAL();
                 /* 切档撤销排队动作是正常操作，不能触发驱动错误路径的 PDST。 */
                 if(obsolete) { publish(now); return; }
+#elif SERVO_JOG_TEST_ENABLE
+                /* USB 撤销配置/重连后，尚未发出的旧会话运动不能交给 UART。 */
+                bool sent;
+                if(wire_generation) {
+                    taskENTER_CRITICAL();
+                    bool valid=wire_generation==jog_generation && jog.phase!=JOG_IDLE &&
+                              jog.phase!=JOG_COMPLETE && jog_session_ready();
+                    sent=valid && n && ServoUart_Send(frame,(uint16_t)n);
+                    taskEXIT_CRITICAL();
+                    if(!valid) {
+                        if(wire_generation==jog_generation && jog.phase!=JOG_IDLE && jog.phase!=JOG_COMPLETE)
+                            jog_done("DISCONNECTED");
+                        publish(now);
+                        return;
+                    }
+                } else sent=n && ServoUart_Send(frame,(uint16_t)n);
 #else
                 bool sent = n && ServoUart_Send(frame,(uint16_t)n);
 #endif

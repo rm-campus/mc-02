@@ -19,6 +19,7 @@ static char tx[65]; static uint32_t tx_due;
 static unsigned tx_count,moves,reply_mask=31;
 static unsigned mode_writes[5], mode_reply_mask=31, drop_first_mode_read;
 static unsigned mode_reads;
+static unsigned field_reply_mask; /* 这些模拟设备使用实物录到的两种回包。 */
 static unsigned slow_mode_reply_mask;
 static uint32_t slow_reply_due;
 static char slow_reply[32];
@@ -48,9 +49,15 @@ int HAL_UART_Receive_IT(UART_HandleTypeDef *h,uint8_t *p,uint16_t n){
 }
 int HAL_UART_Transmit_IT(UART_HandleTypeDef *h,const uint8_t *p,uint16_t n)
 {
-    assert(h==&huart7&&!receive_mode&&!tx_pending&&n<sizeof(tx));
+    assert(h==&huart7&&!receive_mode&&!tx_pending);
+    assert(n>=2U && n<sizeof(tx) && p[n-1U]=='!');
+    assert(!memchr(p,'\r',n) && !memchr(p,'\n',n));
     if(fail_tx && n==15U && p[9]=='T'){fail_tx=false;return HAL_ERROR;} /* Fail the motion, not an intervening due query. */
     memcpy(tx,p,n);tx[n]=0;tx_pending=true;tx_due=tick+2;++tx_count;
+#if SERVO_STATUS_ONLY && !SERVO_JOG_TEST_ENABLE
+    assert(n >= 4 && (!strcmp(tx+4,"PID!") || !strcmp(tx+4,"PVER!") ||
+                      !strcmp(tx+4,"PMOD!") || !strcmp(tx+4,"PRAD!")));
+#endif
     assert(!strstr(tx,"#255")&&!strstr(tx,"PBD")&&!strstr(tx,"PP"));
     return HAL_OK;
 }
@@ -70,20 +77,23 @@ static void bus_step(void)
     if(sscanf(tx,"#%3uP%4uT%4u!",&id,&p,&ms)==3) { positions[id-1]=(uint16_t)p;++moves;return; }
     if(!(reply_mask&(1U<<(id-1))))return;
     char reply[64];
+    bool field_format=(field_reply_mask & (1U<<(id-1U)))!=0;
     if(strstr(tx,"PRAD!"))snprintf(reply,sizeof(reply),"#%03uP%04u!",id,positions[id-1]);
     else if(strstr(tx,"PID!"))snprintf(reply,sizeof(reply),"#%03uP!",id);
-    else if(strstr(tx,"PVER!"))snprintf(reply,sizeof(reply),"#%03uPV0.97!",id);
+    else if(strstr(tx,"PVER!"))
+        snprintf(reply,sizeof(reply),field_format?"#%03u@ ZL-ZServo_AD_CBM V2.1.16STG!\r\n":"#%03uPV0.97!",id);
     else if(strstr(tx,"PMOD!")) {
         ++mode_reads;
         unsigned bit=1U<<(id-1U);
         if(!(mode_reply_mask&bit))return;
         if(drop_first_mode_read&bit) { drop_first_mode_read&=~bit;return; }
+        const char *format=field_format?"#%03uMOD%u!":"#%03uPMOD%u!";
         if(slow_mode_reply_mask&bit) {
-            snprintf(slow_reply,sizeof(slow_reply),"#%03uPMOD%u!",id,modes[id-1]);
+            snprintf(slow_reply,sizeof(slow_reply),format,id,modes[id-1]);
             slow_reply_due=tick+300U;
             return;
         }
-        snprintf(reply,sizeof(reply),"#%03uPMOD%u!",id,modes[id-1]);
+        snprintf(reply,sizeof(reply),format,id,modes[id-1]);
     } else if(sscanf(tx,"#%3uPMOD%1u!",&id,&p)==2) {
         ++mode_writes[id-1U];
         if(id!=3U)modes[id-1U]=p; /* ID3 accepts the frame but retains a different mode. */
@@ -139,6 +149,24 @@ static void protocol(void)
     assert(!Zp_Matches(ZP_POSITION,2,&r));
     assert(!Zp_Parse("#001P9999!",10,&r));
     assert(!Zp_Parse("#001P15x0!",10,&r));
+    for(unsigned mode=1;mode<=8;++mode) {
+        const char *modespec[]={"#001PMOD%u!","#001MOD%u!"};
+        for(unsigned i=0;i<2;++i) {
+            int n=snprintf(f,sizeof(f),modespec[i],mode);
+            assert(Zp_Parse(f,(size_t)n,&r)&&Zp_Matches(ZP_MODE,1,&r)&&r.value==mode);
+            assert(!Zp_Matches(ZP_MODE,2,&r)&&!Zp_Matches(ZP_POSITION,1,&r));
+        }
+    }
+    const char *banner="#001@ ZL-ZServo_AD_CBM V2.1.16STG!\r\n";
+    assert(Zp_Parse(banner,strlen(banner),&r) && !strcmp(r.version,"2.1.16STG"));
+    assert(Zp_Matches(ZP_VERSION,1,&r) && !Zp_Matches(ZP_VERSION,3,&r) && !Zp_Matches(ZP_MODE,1,&r));
+    assert(Zp_Parse("#003PV0.97!",11,&r) && Zp_Matches(ZP_VERSION,3,&r) && !strcmp(r.version,"0.97"));
+    const char *longest="#003PV12345678901234567890123!";
+    assert(Zp_Parse(longest,strlen(longest),&r) && strlen(r.version)==sizeof(r.version)-1U);
+    const char *invalid[]={"#001X!","#001X1500!","#001MOD0!","#001PMOD9!","#001MOD12!",
+        "#255MOD1!","#00AMOD1!","#001@  V2!","#001@ ZL-ZServo x2!","#001@ ZL-ZServo V!",
+        "#001@ ZL-ZServo V2 x!","#001PV!","#001@ ZL-ZServo V123456789012345678901234!"};
+    for(unsigned i=0;i<sizeof(invalid)/sizeof(invalid[0]);++i)assert(!Zp_Parse(invalid[i],strlen(invalid[i]),&r));
     assert(Zp_Parse("#001PMOD1!",10,&r)&&r.type==ZP_REPLY_MODE);
     assert(Zp_Build(f,sizeof(f),ZP_SET_MODE,1,3,0)==10&&!strcmp(f,"#001PMOD3!"));
     assert(!Zp_Build(f,sizeof(f),ZP_SET_MODE,1,5,0));
@@ -148,6 +176,35 @@ static void protocol(void)
 int main(void)
 {
     protocol();assert(Servo_Init());uint32_t ticket;
+    if(SERVO_STATUS_ONLY) {
+        usb.ready=true; run(600);
+        assert(!moves && !output_len);
+        for(unsigned i=0;i<5;++i)positions[i]=(uint16_t)(1200+i*100);
+        input("motor_status\nservo_move 001 1500 20\nservo_stop 002\nservo_set_id 001 005\n");
+        input("servo_test_001_1\nservo_test_005_2\n");
+        input("servo_torque 002 0\nservo_position_mode 1\nservo_mode_probe 001\nclear\nread\n");
+        run(150); assert(!moves && !output_len);
+        assert(Servo_SetTorque(1,false,&ticket)==SERVO_DISABLED);
+        assert(Servo_MovePulse(1,1200,20,&ticket)==SERVO_DISABLED);
+        assert(Servo_RequestModes(2,&ticket)==SERVO_DISABLED);
+        for(unsigned report=0;report<6;++report) {
+            output_len=0;output[0]=0;
+            input("servo_sta");input("tus\r\n");run(100);
+            assert(strstr(output,"SERVO_STATUS BEGIN") && strstr(output,"SERVO_STATUS END"));
+            for(unsigned i=0;i<5;++i) {
+                char row[96];
+                snprintf(row,sizeof(row),"id=%03u model=%s online=1 position=%u",i+1,Servo_GetConfig(i)->model,positions[i]);
+                assert(strstr(output,row) && !mode_writes[i]);
+            }
+        }
+        reply_mask &= ~16U; run(550); output[0]=0;output_len=0;
+        input("servo_status\n"); run(30);
+        assert(strstr(output,"id=005 model=ZP25S online=0 position=1600"));
+        output[0]=0;output_len=0;input("servo_sta");usb.ready=false;run(2);
+        ++usb.session_id;usb.ready=true;run(2);input("tus\n");run(20);assert(!output_len);
+        puts("PASS: status-only USB and read-only UART, five devices, feedback age, disabled commands and reconnect.");
+        return 0;
+    }
     if(!SERVO_BUS_ENABLE){run(500);assert(!tx_count&&Servo_MovePulse(1,1500,1000,&ticket)==SERVO_DISABLED);puts("PASS: servo disabled, no bus traffic.");return 0;}
     assert(Servo_MovePulse(1,1500,1000,&ticket)==SERVO_OFFLINE);
     run(600);

@@ -8,6 +8,7 @@
             "binaryDir": "${sourceDir}/build/${presetName}",
 		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
             "cacheVariables": {
+                "SERVO_STATUS_ONLY": "ON"
             }
         },
         {
@@ -28,14 +29,16 @@
             "name": "RobotControl",
             "inherits": "Debug",
             "cacheVariables": {
-                "ROBOT_CONTROL_PROFILE": "ON"
+                "ROBOT_CONTROL_PROFILE": "ON",
+                "SERVO_STATUS_ONLY": "OFF"
             }
         },
         {
             "name": "ServoId",
             "inherits": "Release",
             "cacheVariables": {
-                "SERVO_ID_SETUP": "ON"
+                "SERVO_ID_SETUP": "ON",
+                "SERVO_STATUS_ONLY": "OFF"
             }
         }
     ],

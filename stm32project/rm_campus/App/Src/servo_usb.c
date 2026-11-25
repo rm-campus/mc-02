@@ -18,12 +18,83 @@ static bool owned,pending,session_known;
 static uint32_t session;
 static uint32_t mode_ticket;
 static UsbSerialTxTicket ticket;
+#if SERVO_RX_TRACE_ENABLE
+/* 已取的块一直保留到 USB 确认发送完成；断线后可凭 seq 识别重发。 */
+static ServoRxTraceBlock trace_block;
+static UsbSerialTxTicket trace_ticket;
+static bool trace_held, trace_in_flight;
+static uint32_t trace_next_offset;
+
+static void check_trace_completion(void)
+{
+    if(!trace_in_flight)return;
+    UsbSerialTxState state=UsbSerial_GetTxState(&trace_ticket);
+    if(state==USB_TX_PENDING)return;
+    trace_in_flight=false;
+    if(state==USB_TX_COMPLETE) {
+        trace_next_offset=trace_block.offset+trace_block.length;
+        trace_held=false;
+    }
+}
+
+static bool send_trace(const UsbSerialStatus *usb)
+{
+    if(trace_in_flight || usb->tx_buffered)return false;
+    if(!trace_held)trace_held=ServoUart_TakeTrace(&trace_block);
+    if(!trace_held)return false;
+
+    char timing[48]="tc_ms=NA dt_ms=NA";
+    if(trace_block.last_tx[0])
+        snprintf(timing,sizeof(timing),"tc_ms=%lu dt_ms=%lu",(unsigned long)trace_block.tx_done_ms,
+                 (unsigned long)(trace_block.first_ms-trace_block.tx_done_ms));
+    char line[192U+ZP_FRAME_MAX+4U*SERVO_TRACE_BYTES];
+    int n=snprintf(line,sizeof(line),"SERVO_RX seq=%lu n=%u first_ms=%lu last_ms=%lu tx=%s %s lost=%lu HEX=",
+        (unsigned long)trace_block.offset,(unsigned)trace_block.length,(unsigned long)trace_block.first_ms,
+        (unsigned long)trace_block.last_ms,trace_block.last_tx[0]?trace_block.last_tx:"NA",timing,
+        (unsigned long)(trace_block.offset-trace_next_offset));
+    if(n<0 || (size_t)n+4U*trace_block.length+9U>sizeof(line))return false;
+    static const char digits[]="0123456789ABCDEF";
+    size_t used=(size_t)n;
+    for(unsigned i=0;i<trace_block.length;++i) {
+        uint8_t b=trace_block.bytes[i];
+        if(i)line[used++]=' ';
+        line[used++]=digits[b>>4];line[used++]=digits[b&15U];
+    }
+    memcpy(line+used," ASCII=",7U);used+=7U;
+    for(unsigned i=0;i<trace_block.length;++i) {
+        uint8_t b=trace_block.bytes[i];
+        line[used++]=(b>=32U && b<=126U)?(char)b:'.';
+    }
+    line[used++]='\n';
+    taskENTER_CRITICAL();
+    UsbSerialStatus current;
+    UsbSerial_GetStatus(&current);
+    trace_in_flight=current.ready && current.session_id==usb->session_id &&
+        UsbSerial_SendTracked(line,(uint16_t)used,&trace_ticket)==USB_SERIAL_OK;
+    taskEXIT_CRITICAL();
+    return trace_in_flight;
+}
+#endif
+#if SERVO_JOG_TEST_ENABLE
+/* USB 任务独占 FIFO，队头的点动收到实测结果后才出队。 */
+#define JOG_QUEUE_SIZE 8U
+typedef struct { uint8_t id, direction; uint32_t ticket; } JogCommand;
+static JogCommand jog_queue[JOG_QUEUE_SIZE];
+static unsigned jog_first, jog_count;
+static uint32_t jog_sequence;
+static bool jog_active;
+#endif
 
 static void reset(void)
 {
     if(owned)FlashTasks_ReleaseUsb(FLASH_USB_SERVO);
     owned=pending=false; head=tail=count=offset=chunk=rejected=0;
     mode_ticket=0;
+#if SERVO_JOG_TEST_ENABLE
+    jog_first=jog_count=0;
+    jog_active=false;
+    ServoJog_Cancel();
+#endif
 }
 static bool update_session(UsbSerialStatus *s)
 {
@@ -33,11 +104,75 @@ static bool update_session(UsbSerialStatus *s)
     }
     return s->ready;
 }
-bool ServoUsb_Busy(void) { return count!=0U || rejected!=0U || mode_ticket!=0U; }
+bool ServoUsb_Busy(void)
+{
+#if SERVO_JOG_TEST_ENABLE
+    if(jog_count)return true;
+#endif
+    return count!=0U || rejected!=0U || mode_ticket!=0U;
+}
 static void commit(unsigned length)
 {
     lengths[head]=(uint16_t)length; head=(head+1U)%REPLIES; ++count;
 }
+#if SERVO_JOG_TEST_ENABLE
+static void jog_error(uint8_t id,uint32_t request,const char *reason)
+{
+    int n=snprintf(replies[head],REPORT_SIZE,"SERVO_TEST ERR id=%03u ticket=%lu reason=%s\n",
+                   (unsigned)id,(unsigned long)request,reason);
+    commit((unsigned)n);
+}
+
+static void submit_jog(const uint8_t *bytes,uint16_t length)
+{
+    /* servo_test_001_1 恰好 16 字节，禁止后缀、空白、嵌入 NUL 和广播地址。 */
+    if(length!=16U || bytes[11]!='0' || bytes[12]!='0' || bytes[13]<'1' || bytes[13]>'5' ||
+       bytes[14]!='_' || (bytes[15]!='1' && bytes[15]!='2')) {
+        jog_error(0,0,"INVALID");
+        return;
+    }
+    const uint8_t id=(uint8_t)(bytes[13]-'0');
+    ServoState state;
+    if(!Servo_CopyState(id,&state) || !state.position_seen) { jog_error(id,0,"OFFLINE"); return; }
+    if(jog_count==JOG_QUEUE_SIZE) { jog_error(id,0,"BUSY"); return; }
+    if(++jog_sequence==0U)++jog_sequence;
+    JogCommand cmd={id,(uint8_t)(bytes[15]-'0'),jog_sequence};
+    jog_queue[(jog_first+jog_count)%JOG_QUEUE_SIZE]=cmd;
+    ++jog_count;
+    int n=snprintf(replies[head],REPORT_SIZE,"SERVO_TEST QUEUED id=%03u ticket=%lu\n",
+                   (unsigned)id,(unsigned long)cmd.ticket);
+    commit((unsigned)n);
+}
+
+static void process_jog(void)
+{
+    if(!jog_count || count==REPLIES)return;
+    const JogCommand *cmd=&jog_queue[jog_first];
+    if(!jog_active) {
+        ServoResult rc=ServoJog_Start(cmd->id,cmd->direction,cmd->ticket,session);
+        if(rc==SERVO_QUEUED) { jog_active=true; return; }
+        jog_error(cmd->id,cmd->ticket,Servo_ResultName(rc));
+    } else {
+        ServoJogReport r;
+        if(!ServoJog_TakeResult(cmd->ticket,&r))return;
+        if(strcmp(r.result,"DISCONNECTED")==0) {
+            /* USB 任务可能错过短暂挂起；总线任务观察到断开时同样丢弃旧动作。 */
+            jog_error(r.id,r.ticket,r.result);
+            jog_count=jog_first=0;
+            jog_active=false;
+            return;
+        }
+        bool done=strcmp(r.result,"DONE")==0;
+        int n=snprintf(replies[head],REPORT_SIZE,"SERVO_TEST %s id=%03u ticket=%lu%s%s start=%u target=%u actual=%u\n",
+                       done?"DONE":"ERR",(unsigned)r.id,(unsigned long)r.ticket,
+                       done?"":" reason=",done?"":r.result,(unsigned)r.start,(unsigned)r.target,(unsigned)r.actual);
+        commit((unsigned)n);
+    }
+    jog_active=false;
+    jog_first=(jog_first+1U)%JOG_QUEUE_SIZE;
+    --jog_count;
+}
+#endif
 static unsigned report(char *out, const ServoModeReport *modes)
 {
     ServoSnapshot s; Servo_CopySnapshot(&s);
@@ -73,6 +208,7 @@ static unsigned report(char *out, const ServoModeReport *modes)
     n=snprintf(out+used,REPORT_SIZE-used,"SERVO_STATUS END\n");
     return n>0 && (unsigned)n<REPORT_SIZE-used ? used+(unsigned)n : 0;
 }
+#if !SERVO_STATUS_ONLY
 static bool numbers(const char *p,unsigned *args,unsigned wanted)
 {
     for(unsigned i=0;i<wanted;++i) {
@@ -85,12 +221,14 @@ static bool numbers(const char *p,unsigned *args,unsigned wanted)
     }
     return *p==0;
 }
+#endif
 static void commit_report(const ServoModeReport *modes)
 {
     unsigned n=report(replies[head],modes);
     if(!n) { strcpy(replies[head],"SERVO ERROR report_too_large\n"); n=(unsigned)strlen(replies[head]); }
     commit(n);
 }
+#if !SERVO_STATUS_ONLY
 static void commit_probe_report(const ServoModeReport *modes)
 {
     const unsigned slot=modes->probe_slot;
@@ -117,11 +255,34 @@ static void commit_probe_report(const ServoModeReport *modes)
         captured ? ascii : "NA",captured ? hex : "NA");
     if(n>0 && n<(int)REPORT_SIZE)commit((unsigned)n);
 }
+#endif
 bool ServoUsb_Dispatch(const uint8_t *bytes,uint16_t length)
 {
+#if SERVO_STATUS_ONLY
+    static const char command[]="servo_status";
+    const bool status_line=length==sizeof(command)-1U && memcmp(bytes,command,sizeof(command)-1U)==0;
+#if SERVO_JOG_TEST_ENABLE
+    static const char prefix[]="servo_test_";
+    const bool jog_line=length>=sizeof(prefix)-1U && memcmp(bytes,prefix,sizeof(prefix)-1U)==0;
+    if(!status_line && !jog_line)return false;
+#else
+    if(!status_line)return false;
+#endif
+#else
     if(length<6U || memcmp(bytes,"servo_",6)!=0)return false;
+#endif
     UsbSerialStatus usb; if(!update_session(&usb))return true;
+#if SERVO_JOG_TEST_ENABLE
+    /* 高频状态查询应给已接收的运动留出结果回复空间。 */
+    if(status_line && jog_count && count>=REPLIES-1U) { ++rejected; return true; }
+#endif
     if(count+(mode_ticket!=0U)>=REPLIES) { ++rejected; return true; }
+#if SERVO_STATUS_ONLY
+#if SERVO_JOG_TEST_ENABLE
+    if(jog_line) { submit_jog(bytes,length); return true; }
+#endif
+    commit_report(NULL);
+#else
     char input[64];
     if(length>=sizeof(input)) { strcpy(replies[head],"SERVO INVALID length\n"); commit((unsigned)strlen(replies[head])); return true; }
     memcpy(input,bytes,length); input[length]=0;
@@ -163,10 +324,15 @@ bool ServoUsb_Dispatch(const uint8_t *bytes,uint16_t length)
     }
     int n=snprintf(replies[head],REPORT_SIZE,"SERVO %s id=%u ticket=%lu; use servo_status for result\n",Servo_ResultName(result),args[0],(unsigned long)id);
     if(n>0 && n<(int)REPORT_SIZE)commit((unsigned)n);
+#endif
     return true;
 }
 void ServoUsb_Process(void)
 {
+#if SERVO_RX_TRACE_ENABLE
+    check_trace_completion();
+    bool finished_reply=false;
+#endif
     UsbSerialStatus usb; if(!update_session(&usb))return;
     if(pending) {
         UsbSerialTxState state=UsbSerial_GetTxState(&ticket);
@@ -176,18 +342,30 @@ void ServoUsb_Process(void)
         if(offset==lengths[tail]) {
             tail=(tail+1U)%REPLIES; --count; offset=0;
             FlashTasks_ReleaseUsb(FLASH_USB_SERVO); owned=false;
+#if SERVO_RX_TRACE_ENABLE
+            finished_reply=true;
+#endif
         }
     }
+#if !SERVO_STATUS_ONLY
     ServoModeReport modes;
     if(mode_ticket && Servo_CopyModeReport(mode_ticket,&modes)) {
         mode_ticket=0;
         if(modes.probe)commit_probe_report(&modes);
         else commit_report(&modes);
     }
+#endif
+#if SERVO_JOG_TEST_ENABLE
+    process_jog();
+#endif
     if(rejected && count+(mode_ticket!=0U)<REPLIES) {
         int n=snprintf(replies[head],REPORT_SIZE,"SERVO BUSY rejected=%u; commands not enqueued\n",rejected);
         rejected=0; if(n>0 && n<(int)REPORT_SIZE)commit((unsigned)n);
     }
+#if SERVO_RX_TRACE_ENABLE
+    /* 状态报告可跨多个 USB 块；只在完整命令回复之间穿插原始接收行。 */
+    if((!count || finished_reply) && !owned && send_trace(&usb))return;
+#endif
     if(!count)return;
     if(!owned) { if(!FlashTasks_AcquireUsb(FLASH_USB_SERVO))return; owned=true; }
     chunk=lengths[tail]-offset;

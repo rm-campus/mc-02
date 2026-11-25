@@ -11,7 +11,7 @@
 
 void Campus_UsbOnReceive(const uint8_t *data, uint16_t length)
 {
-    /* 单一接收入口：motor_status 始终有效，Flash 命令按功能开关启用。 */
+    /* 公用按行接收入口；监测固件按配置分派状态查询与定向点动。 */
     FlashTasks_UsbInput(data, length);
 }
 
@@ -27,11 +27,15 @@ void Campus_UsbProcess(void)
     {
         Campus_UsbOnReceive(data, length);
     }
+#if !SERVO_STATUS_ONLY
     MotorStatusUsb_Process();
+#endif
     ServoUsb_Process();
+#if !SERVO_STATUS_ONLY
     ArmUsb_Process();
     ServoRcUsb_Process();
     MotorDebugUsb_Process();
+#endif
     UsbSerial_Process();
 }
 

@@ -35,6 +35,17 @@ typedef struct {
 } ServoModeReport;
 const ServoConfig *Servo_GetConfig(unsigned index);
 const char *Servo_ResultName(ServoResult result);
+#if SERVO_JOG_TEST_ENABLE
+typedef struct {
+    uint32_t ticket;
+    uint8_t id;
+    uint16_t start, target, actual; /* P 值；0 表示尚未取得。 */
+    const char *result;
+} ServoJogReport;
+ServoResult ServoJog_Start(uint8_t id, uint8_t direction, uint32_t ticket, uint32_t session);
+bool ServoJog_TakeResult(uint32_t ticket, ServoJogReport *out);
+void ServoJog_Cancel(void);
+#endif
 ServoResult Servo_MovePulse(uint8_t id, uint16_t position, uint16_t time_ms, uint32_t *ticket);
 ServoResult Servo_RequestPosition(uint8_t id, uint32_t *ticket);
 ServoResult Servo_RequestModes(uint8_t position_mode, uint32_t *ticket);

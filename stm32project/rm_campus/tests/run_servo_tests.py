@@ -48,10 +48,27 @@ def main():
         for name,data in stubs.items():(folder/name).write_text(data,encoding='utf-8')
         sources=['tests/servo_test.c','Bsp/Src/zp_servo.c','Bsp/Src/servo_uart.c','App/Src/servo_app.c',
                  'App/Src/servo_usb.c','App/Src/flash_tasks.c','App/Src/usb_app.c','App/Src/motor_debug_usb.c']
-        for enable in (0,1):
-            exe=folder/f'servo{enable}.exe'
+        for enable,monitor,jog in ((0,0,0),(1,0,0),(1,1,0),(1,1,1)):
+            exe=folder/f'servo{enable}_monitor{monitor}_jog{jog}.exe'
+            test_sources=['tests/servo_jog_test.c',*sources[1:]] if jog else sources
             subprocess.run([a.cc,'-std=c11','-DSERVO_RC_ENABLE=0','-O2','-Wall','-Wextra','-Werror',f'-DSERVO_BUS_ENABLE={enable}',
+                f'-DSERVO_STATUS_ONLY={monitor}',f'-DSERVO_JOG_TEST_ENABLE={jog}','-DSERVO_RX_TRACE_ENABLE=0',
                 '-I'+str(folder),'-I'+str(root/'App/Inc'),'-I'+str(root/'Bsp/Inc'),
-                *[str(root/s) for s in sources],'-lm','-o',str(exe)],check=True,timeout=30)
-            subprocess.run([str(exe)],check=True,timeout=20)
+                *[str(root/s) for s in test_sources],'-lm','-o',str(exe)],check=True,timeout=30)
+            for case in (['motions','modes','faults','session','queue'] if jog else [None]):
+                subprocess.run([str(exe),*([case] if case else [])],check=True,timeout=20)
+        exe=folder/'feedback.exe'
+        subprocess.run([a.cc,'-std=c11','-O2','-Wall','-Wextra','-Werror','-DSERVO_STATUS_ONLY=1',
+            '-I'+str(folder),'-I'+str(root/'App/Inc'),'-I'+str(root/'Bsp/Inc'),
+            str(root/'tests/servo_feedback_test.c'),*[str(root/s) for s in sources[1:]],
+            '-Wl,--wrap=ServoUart_TakeEvents','-lm','-o',str(exe)],check=True,timeout=30)
+        for case in ('early','edge','missing_tc','retries'):
+            subprocess.run([str(exe),case],check=True,timeout=20)
+        exe=folder/'rx_trace.exe'
+        subprocess.run([a.cc,'-std=c11','-O2','-Wall','-Wextra','-Werror','-DSERVO_STATUS_ONLY=1',
+            '-I'+str(folder),'-I'+str(root/'App/Inc'),'-I'+str(root/'Bsp/Inc'),
+            str(root/'tests/servo_rx_trace_test.c'),*[str(root/s) for s in sources[1:]],
+            '-lm','-o',str(exe)],check=True,timeout=30)
+        for case in ('raw','overflow','burst','reconnect','commands','pver15','pver30','pmod90','pmod110'):
+            subprocess.run([str(exe),case],check=True,timeout=20)
 if __name__=='__main__':main()

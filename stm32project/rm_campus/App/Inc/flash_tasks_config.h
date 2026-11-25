@@ -14,8 +14,8 @@
 #error "Task enable switches must be 0 or 1"
 #endif
 #define FLASH_TASKS_ENABLE (FLASH_TEST_TASK_ENABLE || MOTOR_SPEED_LOG_TASK_ENABLE)
-#if ROBOT_CONTROL_ENABLE && FLASH_TASKS_ENABLE
-#error "Robot control and Flash test/log are exclusive"
+#if (ROBOT_CONTROL_ENABLE || SERVO_STATUS_ONLY) && FLASH_TASKS_ENABLE
+#error "Selected firmware excludes Flash test and logging"
 #endif
 #if MOTOR_SPEED_LOG_TASK_ENABLE && MOTOR_DEBUG_MODE != MOTOR_DEBUG_MODE_FOUR
 #error "Motor speed logging requires four-motor mode"

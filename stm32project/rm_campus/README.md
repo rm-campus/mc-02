@@ -5,11 +5,33 @@
 工程面向四轮麦克纳姆底盘与后续机械臂。主控为达妙 MC02（STM32H723VGT6），使用 HAL、
 FreeRTOS/CMSIS-RTOS2、CMake/Ninja 和 GNU Arm 工具链。
 
+## 当前默认固件：USB 舵机状态与 10° 点动
+
+`Debug` 和 `Release` 预设启用 `SERVO_STATUS_ONLY=ON`。默认调试产物为
+`build/Debug/rm_campus.elf`。上电只运行 USB CDC 和 UART7 舵机轮询两个应用任务。
+板端依次查询 ID 001～005，电脑可以在遥控器关闭时查看全部舵机状态。
+默认开启 UART7 接收监视，打开 USB 串口即可看到 `SERVO_RX` 行。HEX 栏保留 MCU 实际收到的全部字节，
+ASCII 栏便于读指令；时间戳取自 MCU 接收中断。掉线或背压导致缓存覆盖时查看 `lost`。
+可在 [servo_config.h](App/Inc/servo_config.h) 将 `SERVO_RX_TRACE_ENABLE` 设为 0 关闭这项输出。
+
+串口助手选择 MC02 的 USB 串口，115200、8N1、ASCII、行尾 LF 或 CRLF。
+循环发送 `servo_status`，建议间隔 100 ms。每次从 `SERVO_STATUS BEGIN` 到
+`SERVO_STATUS END` 为一份报告；每台查看 `online`、反馈位置 `position`（P 值）和 `age_ms`。
+未收到位置反馈时显示 NA。掉线后会显示最后的反馈值及其年龄。
+
+手动发送 `servo_test_001_1` 使 001 从实测位置顺时针转 10°，`servo_test_001_2` 逆时针转 10°；
+将 001 替换为 002～005 即可选择其余舵机。方向按正对主动输出轴端面观察。每步默认 500 ms，
+每个被接受的命令执行一次。状态查询可循环发送，点动使用手动发送。运动前确认位置模式、读取当前位置；
+发出后等位置反馈确认，再回复 DONE。未接的 005 会回复 OFFLINE。
+[servo_config.h](App/Inc/servo_config.h) 中 `SERVO_JOG_TEST_ENABLE` 默认跟随监测预设开启，设 0 并重新编译即恢复纯只读。
+同一处可调 `SERVO_JOG_STEP_DEG` 和 `SERVO_JOG_MOVE_MS`。关节配置的 P500～2500 是默认协议范围，实际机械端点需按装配标定。
+详见 [USB 点动协议](COMMUNICATION_PROTOCOL.md)。
+
 ## 整机遥控固件
 
 用 `cmake --preset RobotControl` 和 `cmake --build --preset RobotControl` 构建，产物为
-`build/RobotControl/rm_campus_robot.elf`。也可在 [robot_control_config.h](App/Inc/robot_control_config.h)
-将 `ROBOT_CONTROL_ENABLE` 置 1 后编译普通 Debug。头文件默认为 0，Debug 原有调试功能和 ServoId 仍可独立构建。
+`build/RobotControl/rm_campus_robot.elf`。此预设自动关闭 USB 舵机监测与点动并启用
+[ROBOT_CONTROL_ENABLE](App/Inc/robot_control_config.h)。`ServoId` 预设单独用于读号、改号。
 整机仅运行遥控、底盘、舵机总线、监测和状态任务，独占四轮和五舵机。USB 调试、Flash 日志及速度 IK 属于其他固件配置。
 
 | CH9 实体档位（默认读数） | CH2 左竖直 | CH4 左水平 | CH1 右水平 | CH3 右竖直 | LED |
@@ -41,6 +63,9 @@ FreeRTOS/CMSIS-RTOS2、CMake/Ninja 和 GNU Arm 工具链。
 底盘 0x200 帧及 LED/蜂鸣时序集成回归在 `tests/run_motor_debug_tests.py` 中执行。
 
 ## 普通调试固件
+
+下面是关闭 `SERVO_STATUS_ONLY` 后的台架配置。需要时使用
+`cmake --preset Debug -DSERVO_STATUS_ONLY=OFF` 再构建；重新执行 `cmake --preset Debug` 即选回 USB 舵机监测预设。
 
 **默认四轮模式，CH8（左起第二个拨杆）在运行中选择目标。+1 或 0 为 CH2 四轮同速，−1 为麦轮控制。左杆控制前后（CH2）和横移（CH4），右杆水平（CH1）控制旋转，右推对应俯视顺时针。三轴独立过 ±60 死区，可边走边转，合成后每轮最高 400 rpm。
 最左拨杆先 +1 确认关闭，再 -1 启用，各电机独立检查回中 300 ms 与基本静止；健康电机不等待缺失电机。**

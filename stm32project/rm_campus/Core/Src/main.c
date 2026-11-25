@@ -95,7 +95,11 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+#if SERVO_STATUS_ONLY
+  /* USB 在 UsbTask 中初始化，保留 PA11/PA12 所在端口时钟。UART7 MSP 自行开启 GPIOE。 */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  MX_UART7_Init();
+#else
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -117,6 +121,7 @@ int main(void)
    * 对象初始化必须先于 CAN 接收 IRQ；当前不在此处使能运动或发送非零电流。 */
   Campus_Init();
 #endif
+#endif /* SERVO_STATUS_ONLY */
   /* USER CODE END 2 */
 
   /* Init scheduler */
