@@ -30,6 +30,9 @@
 #include "usb_app.h"
 #include "imu_app.h"
 #include "flash_tasks.h"
+#ifdef SERVO_ID_SETUP
+#include "servo_id_setup.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -153,6 +156,12 @@ void vApplicationMallocFailedHook(void)
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
+#ifdef SERVO_ID_SETUP
+  /* 改号固件仅启动 USB 任务，由它独占舵机总线。 */
+  UsbTaskHandle = osThreadNew(StartUsbTask, NULL, &UsbTask_attributes);
+  if (UsbTaskHandle == NULL) Error_Handler();
+  return;
+#endif
 
   /* USER CODE END Init */
 
@@ -216,7 +225,11 @@ void StartUsbTask(void *argument)
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN StartUsbTask */
+#ifdef SERVO_ID_SETUP
+  ServoIdSetup_Task();
+#else
   Campus_UsbTask(argument);
+#endif
   /* USER CODE END StartUsbTask */
 }
 

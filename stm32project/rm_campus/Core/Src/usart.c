@@ -72,7 +72,8 @@ void MX_UART5_Init(void)
 
 }
 
-/* UART7: MC02 P13 pin 4 / PE8, native single-wire half-duplex. External logic-level pull-up required. */
+/* UART7: MC02 P13 pin 3 / PE7, single-wire half-duplex with TX/RX pin swap.
+ * The servo adapter does not provide an external pull-up. */
 void MX_UART7_Init(void)
 {
   huart7.Instance = UART7;
@@ -85,7 +86,8 @@ void MX_UART7_Init(void)
   huart7.Init.OverSampling = UART_OVERSAMPLING_16;
   huart7.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart7.Init.ClockPrescaler = UART_PRESCALER_DIV1;
-  huart7.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  huart7.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_SWAP_INIT;
+  huart7.AdvancedInit.Swap = UART_ADVFEATURE_SWAP_ENABLE;
   if (HAL_HalfDuplex_Init(&huart7) != HAL_OK) Error_Handler();
   if (HAL_UARTEx_SetTxFifoThreshold(&huart7, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) Error_Handler();
   if (HAL_UARTEx_SetRxFifoThreshold(&huart7, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) Error_Handler();
@@ -168,9 +170,9 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK) Error_Handler();
     __HAL_RCC_UART7_CLK_ENABLE();
     __HAL_RCC_GPIOE_CLK_ENABLE();
-    GPIO_InitStruct.Pin = GPIO_PIN_8;
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     GPIO_InitStruct.Alternate = GPIO_AF7_UART7;
     HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
@@ -210,7 +212,7 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
   else if(uartHandle->Instance==UART7)
   {
     __HAL_RCC_UART7_CLK_DISABLE();
-    HAL_GPIO_DeInit(GPIOE, GPIO_PIN_8);
+    HAL_GPIO_DeInit(GPIOE, GPIO_PIN_7);
     HAL_NVIC_DisableIRQ(UART7_IRQn);
   }
 }

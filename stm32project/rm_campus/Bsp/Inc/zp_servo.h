@@ -6,7 +6,7 @@
 #define ZP_FRAME_MAX 64U
 #define ZP_VERSION_MAX 24U
 typedef enum { ZP_MOVE, ZP_POSITION, ZP_ID, ZP_VERSION, ZP_MODE,
-               ZP_STOP, ZP_PAUSE, ZP_RESUME, ZP_TORQUE_ON, ZP_TORQUE_OFF } ZpOperation;
+               ZP_STOP, ZP_PAUSE, ZP_RESUME, ZP_TORQUE_ON, ZP_TORQUE_OFF, ZP_SET_MODE } ZpOperation;
 typedef enum { ZP_REPLY_POSITION, ZP_REPLY_ID, ZP_REPLY_VERSION, ZP_REPLY_MODE, ZP_REPLY_OK } ZpReplyType;
 typedef struct {
     ZpReplyType type;

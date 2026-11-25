@@ -10,7 +10,7 @@
 - ChassisTask 每 1 ms 执行宏选择的单电机/四轮独立 PI，并统一发送一帧 0x200；单轮异常只撤掉该路电流。
 - RcTask 用 UART5 接收 FS-i6X/iA6B 的 25 字节 SBUS，超时/失控判无效。
 - MonitorTask 每 10 ms 更新状态，StatusTask 每 50 ms 更新 LED。
-- ServoBusTask 接入 UART7/PE8 原生半双工，管理五台众灵 ZP 舵机。上电只查询，具体接线和 USB 命令见 [SERVO_INTEGRATION.md](SERVO_INTEGRATION.md)。
+- ServoBusTask 使用 UART7 的 TX/RX Swap，在 PE7 上单线收发，管理五台众灵 ZP 舵机。上电只查询，具体接线和 USB 命令见 [SERVO_INTEGRATION.md](SERVO_INTEGRATION.md)。
 - ImuTask 每 1 ms 轮询 BMI088 并运行 C 版四元数 EKF；上电需保持静止完成 1000 样本校准。
 - UsbTask 服务 USB 队列，四轮同速运行后发 200 Hz 九列纯 CSV（公共目标、四路转速、四路反馈电流），麦轮模式为十二列（四路目标、四路转速、四路反馈电流），不发 ready；手动 motor_status 和舵机命令保留，Flash 命令默认关闭。
   IMU 接线、应用接口和错误码见 [IMU_INTEGRATION.md](IMU_INTEGRATION.md)。本次未接入恒温。

@@ -15,7 +15,9 @@ typedef struct
     float gyro_bias[3];   /* rad/s；此六状态 EKF 不估计 Z 轴残余零偏。 */
 } ImuFilterData;
 
-/* 初始姿态由上层静止重力均值给出；会归一化。重复 Init 复用静态内存。 */
+/** @param initial_quaternion 静止校准得到的初始姿态，顺序为 w、x、y、z，内部归一化。
+ * @return true 表示滤波器就绪；空指针、非有限值、模长过小或 EKF 初始化失败返回 false。
+ * 每次初始化都会重置就绪标志，失败后需要重新初始化才能更新。 */
 bool ImuFilter_Init(const float initial_quaternion[4]);
 
 /* 有效 dt 范围 (0,0.05] 秒。非法输入/零加速度返回 false，且不修改输出。

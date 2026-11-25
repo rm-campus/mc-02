@@ -112,3 +112,10 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Inc App/Inc Algorithm/Inc Drivers/CMSIS/DSP/Include
 )
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ARM_MATH_MATRIX_CHECK)
+
+option(SERVO_ID_SETUP "Build the standalone UART7 servo ID setup firmware" OFF)
+if(SERVO_ID_SETUP)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE App/Src/servo_id_setup.c)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE SERVO_ID_SETUP)
+    set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME "rm_campus_servo_id")
+endif()

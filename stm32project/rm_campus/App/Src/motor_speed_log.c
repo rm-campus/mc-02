@@ -211,6 +211,8 @@ static void sample(uint32_t now)
     }
     s_head = (uint16_t)((s_head + 1U) % MOTOR_LOG_FIFO_RECORDS);
     ++s_count; ++s_accepted;
+    /* 离线反馈在日志里占零值，不能据此判断达标。四台都在线并运行时才比较，
+     * 首次同时达标就记录 s_hit_ms，此后误差波动也沿用这个停止计时起点。 */
     if (!s_status.reached && online == 0x0FU && s_snapshot.debug.running_mask == 0x0FU)
     {
         bool reached = true, moving = false;
@@ -355,6 +357,7 @@ static void replay(uint32_t now)
     }
     if (s_tx_pending)
     {
+        /* 传输完成后才推进回放位置；最后一帧仅排入 USB 队列时仍需保留 Flash 数据。 */
         if (UsbSerial_GetTxState(&s_ticket) != USB_TX_COMPLETE) return;
         s_tx_pending = false;
         ++s_play_index; ++s_play_position;

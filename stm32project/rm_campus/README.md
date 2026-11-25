@@ -75,7 +75,7 @@ Flash 日志已直接读取 `Campus_CopyMotorStatus()` 中的四轮真实控制�
 | 遥控 | FS-i6X＋iA6B，UART5/PD2，100000 baud、8E2（HAL 9 位字长含偶校验），循环 DMA；板载电路已反相 |
 | BMI088 | SPI2 Mode 3 / 3 MHz；PC1 MOSI、PC2_C MISO、PB13 SCK；PC0 ACC_CS、PC3_C GYRO_CS；PE10/PE12 普通输入 |
 | RGB LED | SPI6 MOSI/PA7，6 MHz，WS2812 编码 |
-| 舵机总线 | UART7/PE8，P13-4，115200/8N1 半双工，开漏；PE7 不接，上拉/电平与独立动力供电需核对 |
+| 舵机总线 | UART7/PE7，P13-3，TX/RX Swap，115200/8N1 单线半双工、开漏；PE8 留空 |
 | USB | MCU 原生 USB，PA11/PA12，USB_OTG_HS 内置 FS PHY，CDC 虚拟串口 |
 | W25Q64JV | OCTOSPI2→OCTOSPIM Port 1；PB2 CLK、PE11 CS、PD11 IO0、PB0 IO1、PA3 IO2、PA1 IO3；10 MHz、Mode 3 |
 

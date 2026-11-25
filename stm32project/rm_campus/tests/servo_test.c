@@ -13,9 +13,15 @@
 UART_HandleTypeDef huart7={7},huart5={5};
 static uint32_t tick,mask; static unsigned depth;
 static bool receive_mode,tx_pending,drop_tc,drop_move_tc,fail_tx;
+static bool uart_unavailable;
 static uint8_t *rx_byte;
 static char tx[65]; static uint32_t tx_due;
 static unsigned tx_count,moves,reply_mask=31;
+static unsigned mode_writes[5], mode_reply_mask=31, drop_first_mode_read;
+static unsigned mode_reads;
+static unsigned slow_mode_reply_mask;
+static uint32_t slow_reply_due;
+static char slow_reply[32];
 static uint16_t positions[5]={1500,1500,1500,1500,1500};
 static unsigned modes[5]={1,1,1,1,1};
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *);
@@ -35,7 +41,11 @@ int HAL_UART_Abort(UART_HandleTypeDef *h){assert(h==&huart7);rx_byte=NULL;tx_pen
 int HAL_UART_AbortReceive(UART_HandleTypeDef *h){assert(h==&huart7);rx_byte=NULL;return HAL_OK;}
 int HAL_HalfDuplex_EnableReceiver(UART_HandleTypeDef *h){assert(h==&huart7);receive_mode=true;return HAL_OK;}
 int HAL_HalfDuplex_EnableTransmitter(UART_HandleTypeDef *h){assert(h==&huart7&&!rx_byte);receive_mode=false;return HAL_OK;}
-int HAL_UART_Receive_IT(UART_HandleTypeDef *h,uint8_t *p,uint16_t n){assert(h==&huart7&&receive_mode&&!rx_byte&&n==1);rx_byte=p;return HAL_OK;}
+int HAL_UART_Receive_IT(UART_HandleTypeDef *h,uint8_t *p,uint16_t n){
+    assert(h==&huart7&&receive_mode&&!rx_byte&&n==1);
+    if(uart_unavailable)return HAL_ERROR;
+    rx_byte=p;return HAL_OK;
+}
 int HAL_UART_Transmit_IT(UART_HandleTypeDef *h,const uint8_t *p,uint16_t n)
 {
     assert(h==&huart7&&!receive_mode&&!tx_pending&&n<sizeof(tx));
@@ -50,6 +60,10 @@ static void feed(const char *p)
 }
 static void bus_step(void)
 {
+    if(slow_reply[0] && (int32_t)(tick-slow_reply_due)>=0) {
+        feed(slow_reply);
+        slow_reply[0]=0;
+    }
     if(!tx_pending||drop_tc||(drop_move_tc && strlen(tx)==15U && tx[9]=='T')||(int32_t)(tick-tx_due)<0)return;
     tx_pending=false;HAL_UART_TxCpltCallback(&huart7);assert(receive_mode&&rx_byte);
     unsigned id=0,p=0,ms=0; assert(sscanf(tx,"#%3u",&id)==1&&id>=1&&id<=5);
@@ -59,7 +73,24 @@ static void bus_step(void)
     if(strstr(tx,"PRAD!"))snprintf(reply,sizeof(reply),"#%03uP%04u!",id,positions[id-1]);
     else if(strstr(tx,"PID!"))snprintf(reply,sizeof(reply),"#%03uP!",id);
     else if(strstr(tx,"PVER!"))snprintf(reply,sizeof(reply),"#%03uPV0.97!",id);
-    else if(strstr(tx,"PMOD!"))snprintf(reply,sizeof(reply),"#%03uPMOD%u!",id,modes[id-1]);
+    else if(strstr(tx,"PMOD!")) {
+        ++mode_reads;
+        unsigned bit=1U<<(id-1U);
+        if(!(mode_reply_mask&bit))return;
+        if(drop_first_mode_read&bit) { drop_first_mode_read&=~bit;return; }
+        if(slow_mode_reply_mask&bit) {
+            snprintf(slow_reply,sizeof(slow_reply),"#%03uPMOD%u!",id,modes[id-1]);
+            slow_reply_due=tick+300U;
+            return;
+        }
+        snprintf(reply,sizeof(reply),"#%03uPMOD%u!",id,modes[id-1]);
+    } else if(sscanf(tx,"#%3uPMOD%1u!",&id,&p)==2) {
+        ++mode_writes[id-1U];
+        if(id!=3U)modes[id-1U]=p; /* ID3 accepts the frame but retains a different mode. */
+        if(id==2U)return; /* ID2 saves successfully without an ACK. */
+        if(id==1U)snprintf(reply,sizeof(reply),"#%03uPMOD%u!",id,p);
+        else strcpy(reply,"#OK!");
+    }
     else strcpy(reply,"#OK!");
     feed(reply); /* Reply immediately after TC, before owner task runs. */
 }
@@ -109,6 +140,9 @@ static void protocol(void)
     assert(!Zp_Parse("#001P9999!",10,&r));
     assert(!Zp_Parse("#001P15x0!",10,&r));
     assert(Zp_Parse("#001PMOD1!",10,&r)&&r.type==ZP_REPLY_MODE);
+    assert(Zp_Build(f,sizeof(f),ZP_SET_MODE,1,3,0)==10&&!strcmp(f,"#001PMOD3!"));
+    assert(!Zp_Build(f,sizeof(f),ZP_SET_MODE,1,5,0));
+    assert(Zp_Matches(ZP_SET_MODE,1,&r)&&!Zp_Matches(ZP_SET_MODE,2,&r));
     assert(Zp_Parse("#OK!",4,&r)&&Zp_Matches(ZP_STOP,1,&r)&&!Zp_Matches(ZP_POSITION,1,&r));
 }
 int main(void)
@@ -179,6 +213,37 @@ int main(void)
     modes[0]=1;
     /* The tick counter may wrap while queries and queue deadlines are active. */
     tick=UINT32_MAX-100;assert(Servo_Init());run(600);assert(state(5).online);
+    usb.ready=true; ++usb.session_id; output_len=0; output[0]=0;
+    modes[0]=2; slow_mode_reply_mask=1U;
+    unsigned before_reads=mode_reads;
+    input("servo_status\n");run(80);
+    assert(mode_reads==before_reads&&state(1).mode==1);
+    assert(strstr(output,"mode=1 mode_valid=1 mode_check=CACHED"));
+    output_len=0; output[0]=0;
+    input("servo_mode_probe 001\n");
+    assert(Servo_MovePulse(1,1490,1000,&ticket)==SERVO_BUSY);
+    run(500);
+    slow_mode_reply_mask=0U;
+    assert(strstr(output,"SERVO_MODE_PROBE id=001 result=OK mode=2 window_ms=1000"));
+    assert(strstr(output,"first_ms=300")&&strstr(output,"ASCII #001PMOD2!"));
+    assert(strstr(output,"HEX 23 30 30 31 50 4D 4F 44 32 21"));
+    assert(state(1).mode==2 && mode_writes[0]==0U);
+    output_len=0; output[0]=0;
+    unsigned before_batch=moves;
+    drop_first_mode_read=1U;
+    input("servo_position_mode 3\n");
+    assert(Servo_MovePulse(1,1490,1000,&ticket)==SERVO_BUSY);
+    run(1200);
+    assert(strstr(output,"requested_mode=3")&&strstr(output,"mode=1 mode_valid=1 mode_check=BAD_MODE"));
+    for(unsigned i=0;i<5;++i)assert(mode_writes[i]==1U);
+    assert(moves==before_batch && state(1).mode==3 && state(2).mode==3 && state(3).mode==1);
+    output_len=0; output[0]=0;
+    mode_reply_mask&=~1U; input("servo_mode_probe 001\n");run(1150);
+    assert(strstr(output,"SERVO_MODE_PROBE id=001 result=TIMEOUT mode=0 window_ms=1000 rx_bytes=0"));
+    output_len=0; output[0]=0; uart_unavailable=true;
+    assert(!Servo_Init());
+    input("servo_mode_probe 001\n");run(4200);
+    assert(strstr(output,"SERVO_MODE_PROBE id=001 result=TIMEOUT")&&!ServoUsb_Busy());
     puts("PASS: servo protocol, UART7 TC direction/fast replies, startup queries, limits/coalescing/stop, offline/reconnect, overflow/errors/timeouts, USB arbitration/session and tick wrap.");
     return 0;
 }

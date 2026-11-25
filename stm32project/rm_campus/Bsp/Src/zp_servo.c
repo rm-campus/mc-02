@@ -5,6 +5,11 @@
 size_t Zp_Build(char *out, size_t capacity, ZpOperation op, uint8_t id, uint16_t position, uint16_t time_ms)
 {
     if (!out || !capacity || id == 255U) return 0;
+    if (op == ZP_SET_MODE) {
+        if (position < 1U || position > 4U) return 0;
+        int n = snprintf(out, capacity, "#%03uPMOD%u!", (unsigned)id, (unsigned)position);
+        return n > 0 && (size_t)n < capacity ? (size_t)n : 0;
+    }
     const char *suffix;
     switch (op) {
     case ZP_POSITION: suffix="PRAD!"; break;
@@ -59,6 +64,9 @@ bool Zp_ExpectsReply(ZpOperation op) { return op != ZP_MOVE; }
 bool Zp_Matches(ZpOperation op, uint8_t id, const ZpReply *r)
 {
     if(!r)return false;
+    /* Write ACK may be #OK! or a PMOD echo. Only a separate query verifies the mode. */
+    if(op==ZP_SET_MODE)return r->type==ZP_REPLY_OK ||
+        (r->type==ZP_REPLY_MODE && r->id==id);
     if(op>=ZP_STOP && op<=ZP_TORQUE_OFF)return r->type==ZP_REPLY_OK;
     if(r->id!=id)return false;
     return (op==ZP_POSITION && r->type==ZP_REPLY_POSITION) || (op==ZP_ID && r->type==ZP_REPLY_ID) ||

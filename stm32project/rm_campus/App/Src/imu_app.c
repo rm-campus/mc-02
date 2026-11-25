@@ -102,6 +102,8 @@ static bool calibration_step(void)
         working.error = IMU_ERROR_MOVING;
         return true;
     }
+    /* Welford 在线统计：前 3 路是加速度，后 3 路是角速度。每次只更新均值和
+     * 离均差平方和，窗口满后即可按样本方差判噪声，无需保存全部原始样本。 */
     ++working.cal_samples;
     for (unsigned i = 0; i < 6U; ++i)
     {
@@ -123,6 +125,7 @@ static bool calibration_step(void)
             return true;
         }
     }
+    /* 静止时用重力方向确定初始横滚和俯仰；绕重力轴旋转无法靠重力区分，初始航向取零。 */
     float roll = atan2f(cal_mean[1], cal_mean[2]);
     float pitch = atan2f(-cal_mean[0], sqrtf(cal_mean[1] * cal_mean[1] + cal_mean[2] * cal_mean[2]));
     float cr = cosf(0.5f * roll), sr = sinf(0.5f * roll);

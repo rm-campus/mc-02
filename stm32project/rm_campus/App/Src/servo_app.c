@@ -25,6 +25,14 @@ static ServoControlOwner control_owner;
 static uint8_t control_claimed;
 /* 停止和故障按源保留，释放控制权不能撤销已经要求的停止。 */
 static uint8_t control_stops[3], control_inhibited[3], control_manual_hold[3], control_stop_failed[3];
+/* One USB batch at a time. ServoBusTask owns all UART traffic and publishes the result. */
+static ServoModeReport mode_work, mode_done;
+static uint8_t mode_slot, mode_end_slot, mode_attempt;
+static uint32_t mode_due, mode_deadline, probe_tx_done_ms;
+static bool mode_current, mode_verify, mode_yield_poll;
+#define MODE_SETTLE_MS 100U
+#define MODE_READ_ATTEMPTS 2U
+#define MODE_BATCH_TIMEOUT_MS 4000U
 
 static bool due(uint32_t now, uint32_t when) { return (int32_t)(now-when)>=0; }
 static int slot_for(uint8_t id)
@@ -105,7 +113,8 @@ bool Servo_ControlClaim(ServoControlOwner owner,uint8_t slots)
     if(!slots)return Servo_ControlRelease(owner);
     if(!SERVO_BUS_ENABLE)return false;
     taskENTER_CRITICAL();
-    bool ready=published.initialized && (control_owner==SERVO_OWNER_NONE || control_owner==owner);
+    bool ready=published.initialized && !mode_work.ticket &&
+        (control_owner==SERVO_OWNER_NONE || control_owner==owner);
     /* ARM 首次接管必须等所有旧动作/停止结束，查询事务可以自然完成。 */
     if(ready && control_owner==SERVO_OWNER_NONE && owner==SERVO_OWNER_ARM) {
         ready=!control_stops[SERVO_OWNER_RC] && !control_stops[SERVO_OWNER_ARM];
@@ -170,7 +179,7 @@ static void arm_failure(unsigned failed_slot)
 }
 static ServoResult validate_motion(ServoControlOwner owner,unsigned slot,uint16_t p,uint16_t ms,uint32_t now)
 {
-    if(motion_requires_reset())return SERVO_BUSY;
+    if(motion_requires_reset() || mode_work.ticket)return SERVO_BUSY;
     if(!published.initialized)return SERVO_NOT_READY;
     if(p<configs[slot].minimum || p>configs[slot].maximum || ms>9999U)return SERVO_RANGE;
     if(owner==SERVO_OWNER_NONE) {
@@ -197,7 +206,7 @@ static ServoResult enqueue(uint8_t id,ZpOperation op,uint16_t p,uint16_t ms,uint
     taskENTER_CRITICAL();
     ServoState *s=&published.device[slot];
     ServoResult result=SERVO_QUEUED;
-    if(is_motion(op) && motion_requires_reset())result=SERVO_BUSY;
+    if(is_motion(op) && (motion_requires_reset() || mode_work.ticket))result=SERVO_BUSY;
     else if(op==ZP_MOVE)result=validate_motion(owner,(unsigned)slot,p,ms,HAL_GetTick());
     else if(!published.initialized)result=SERVO_NOT_READY;
     else if(is_motion(op) && control_owner!=SERVO_OWNER_NONE)result=SERVO_BUSY;
@@ -259,6 +268,58 @@ uint8_t Servo_RcInhibited(void) { return Servo_ControlInhibited(SERVO_OWNER_RC);
 void Servo_RcClearInhibit(void) { Servo_ControlClearInhibit(SERVO_OWNER_RC); }
 ServoResult Servo_MovePulse(uint8_t id,uint16_t p,uint16_t ms,uint32_t *t) { return enqueue(id,ZP_MOVE,p,ms,t,SERVO_OWNER_NONE); }
 ServoResult Servo_RequestPosition(uint8_t id,uint32_t *t) { return enqueue(id,ZP_POSITION,0,0,t,SERVO_OWNER_NONE); }
+static ServoResult request_modes(uint8_t position_mode, int probe_slot, uint32_t *ticket)
+{
+    if(ticket)*ticket=0U;
+    if(!SERVO_BUS_ENABLE)return SERVO_DISABLED;
+    if(!ticket)return SERVO_INVALID;
+    taskENTER_CRITICAL();
+    ServoResult result=SERVO_QUEUED;
+    if(!published.initialized)result=SERVO_NOT_READY;
+    else if(mode_work.ticket)result=SERVO_BUSY;
+    else {
+        if(control_owner!=SERVO_OWNER_NONE || control_stops[SERVO_OWNER_RC] ||
+            control_stops[SERVO_OWNER_ARM] ||
+            (phase!=IDLE && (is_motion(current.op) || is_halt(current.op)))) result=SERVO_BUSY;
+        for(unsigned i=0;i<queued && result==SERVO_QUEUED;++i)
+            if(is_motion(queue[i].op) || is_halt(queue[i].op))result=SERVO_BUSY;
+    }
+    if(result==SERVO_QUEUED) {
+        mode_slot=probe_slot<0 ? 0U : (uint8_t)probe_slot;
+        mode_end_slot=probe_slot<0 ? SERVO_COUNT : (uint8_t)(mode_slot+1U);
+        mode_work=(ServoModeReport){.ticket=next_ticket(),.requested_mode=position_mode,
+                                    .probe=probe_slot>=0,.probe_slot=mode_slot};
+        mode_attempt=0U;
+        mode_due=HAL_GetTick();
+        mode_deadline=mode_due+MODE_BATCH_TIMEOUT_MS;
+        mode_verify=position_mode==0U;
+        mode_yield_poll=false;
+        *ticket=mode_work.ticket;
+    }
+    taskEXIT_CRITICAL();
+    if(result==SERVO_QUEUED && thread)(void)osThreadFlagsSet(thread,SERVO_TASK_FLAG);
+    return result;
+}
+ServoResult Servo_RequestModes(uint8_t position_mode, uint32_t *ticket)
+{
+    if(position_mode<1U || position_mode>4U)return SERVO_INVALID;
+    return request_modes(position_mode,-1,ticket);
+}
+ServoResult Servo_RequestModeProbe(uint8_t id, uint32_t *ticket)
+{
+    int slot=slot_for(id);
+    if(slot<0)return SERVO_INVALID;
+    return request_modes(0U,slot,ticket);
+}
+bool Servo_CopyModeReport(uint32_t ticket, ServoModeReport *out)
+{
+    if(!ticket || !out)return false;
+    taskENTER_CRITICAL();
+    bool ready=mode_done.ticket==ticket;
+    if(ready)*out=mode_done;
+    taskEXIT_CRITICAL();
+    return ready;
+}
 ServoResult Servo_Stop(uint8_t id,uint32_t *t) { return enqueue(id,ZP_STOP,0,0,t,SERVO_OWNER_NONE); }
 ServoResult Servo_SetTorque(uint8_t id,bool on,uint32_t *t) { return enqueue(id,on?ZP_TORQUE_ON:ZP_TORQUE_OFF,0,0,t,SERVO_OWNER_NONE); }
 ServoResult Servo_Pause(uint8_t id,uint32_t *t) { return enqueue(id,ZP_PAUSE,0,0,t,SERVO_OWNER_NONE); }
@@ -273,6 +334,8 @@ bool Servo_Init(void)
     taskENTER_CRITICAL();queued=0;sequence=0;control_owner=SERVO_OWNER_NONE;control_claimed=0;
     memset(control_stops,0,sizeof(control_stops));memset(control_inhibited,0,sizeof(control_inhibited));
     memset(control_manual_hold,0,sizeof(control_manual_hold));memset(control_stop_failed,0,sizeof(control_stop_failed));taskEXIT_CRITICAL();
+    memset(&mode_work,0,sizeof(mode_work));memset(&mode_done,0,sizeof(mode_done));
+    mode_current=false;
     ServoRc_Init(now);
     Arm_Init(now);
     phase=IDLE; line_length=0; poll_slot=0; next_slot=guard=now;
@@ -287,6 +350,37 @@ bool Servo_Init(void)
     work.initialized=SERVO_BUS_ENABLE!=0;
     hardware_ready=SERVO_BUS_ENABLE ? ServoUart_Init() : false;
     publish(now); return !SERVO_BUS_ENABLE || hardware_ready;
+}
+
+static void publish_modes(void)
+{
+    taskENTER_CRITICAL();
+    mode_done=mode_work;
+    mode_work.ticket=0;
+    mode_work.requested_mode=0;
+    taskEXIT_CRITICAL();
+}
+static void finish_mode(ServoResult result, uint32_t now, const ZpReply *reply)
+{
+    if(current.op==ZP_SET_MODE && phase==REPLY) {
+        /* Verify even without a write ACK, since the device may have saved the mode. */
+        mode_verify=true;
+        mode_due=now+MODE_SETTLE_MS;
+        return;
+    }
+    if(current.op==ZP_MODE && !mode_work.probe && result!=SERVO_OK && mode_attempt<MODE_READ_ATTEMPTS) {
+        mode_due=now+SERVO_POLL_PERIOD_MS;
+        return;
+    }
+    if(current.op==ZP_MODE && result==SERVO_OK && reply) {
+        mode_work.mode[mode_slot]=(uint8_t)reply->value;
+        if(mode_work.requested_mode && reply->value!=mode_work.requested_mode)result=SERVO_BAD_MODE;
+    }
+    mode_work.result[mode_slot++]=result;
+    mode_attempt=0;
+    mode_verify=mode_work.requested_mode==0U;
+    mode_due=now;
+    if(mode_slot==mode_end_slot)publish_modes();
 }
 
 static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
@@ -305,7 +399,7 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
         }
         taskEXIT_CRITICAL();
     }
-    if(result!=SERVO_OK) {
+    if(result!=SERVO_OK && !mode_current) {
         taskENTER_CRITICAL();arm_failure(current.slot);taskEXIT_CRITICAL();
     }
     if(result==SERVO_OK) {
@@ -315,7 +409,9 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
             switch(reply->type) {
             case ZP_REPLY_ID: s->id_seen=true; break;
             case ZP_REPLY_VERSION: memcpy(s->version,reply->version,sizeof(s->version)); s->version_valid=true; break;
-            case ZP_REPLY_MODE: s->mode=(uint8_t)reply->value; s->mode_valid=true; break;
+            case ZP_REPLY_MODE:
+                if(current.op==ZP_MODE) { s->mode=(uint8_t)reply->value; s->mode_valid=true; }
+                break;
             case ZP_REPLY_POSITION:
                 /* Recheck metadata after an offline device reappears. No stale moves are replayed. */
                 if(s->position_seen && !s->online)boot_phase[current.slot]=0;
@@ -330,8 +426,9 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
     }
     if(auto_request && current.op!=ZP_POSITION && boot_phase[current.slot]<3U)++boot_phase[current.slot];
     /* Repeated movement commands must not postpone feedback polling indefinitely. */
-    if(current.op>=ZP_POSITION && current.op<=ZP_MODE)
+    if(!mode_current && current.op>=ZP_POSITION && current.op<=ZP_MODE)
         next_poll[current.slot]=s->failures>=SERVO_FAIL_LIMIT ? now+SERVO_OFFLINE_RETRY_MS : request_started+SERVO_POLL_PERIOD_MS;
+    if(mode_current) { finish_mode(result,now,reply); mode_current=false; }
     if(result!=SERVO_OK) {
         hardware_ready=ServoUart_Recover();
         guard=now+SERVO_RECOVERY_QUIET_MS;
@@ -341,6 +438,12 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
 
 static void input_byte(uint8_t c,uint32_t now)
 {
+    if(phase==REPLY && mode_current && mode_work.probe) {
+        const uint16_t index=mode_work.probe_rx_bytes;
+        if(index==0U)mode_work.probe_first_ms=(uint32_t)(now-probe_tx_done_ms);
+        if(index<sizeof(mode_work.probe_raw))mode_work.probe_raw[index]=c;
+        if(index<UINT16_MAX)++mode_work.probe_rx_bytes;
+    }
     if(c=='#')line_length=0;
     else if(!line_length)return;
     if(line_length>=sizeof(line)) { ++work.malformed; line_length=0; return; }
@@ -369,6 +472,21 @@ static bool take_poll(uint32_t now)
     }
     return false;
 }
+static bool take_mode_request(uint32_t now)
+{
+    if(!mode_work.ticket || !due(now,mode_due))return false;
+    current=(Request){.slot=mode_slot,.op=mode_verify ? ZP_MODE : ZP_SET_MODE,
+                      .position=mode_work.requested_mode};
+    if(mode_verify)++mode_attempt;
+    else {
+        /* Changing the mode changes the interpretation of position P. */
+        work.device[mode_slot].mode_valid=false;
+        work.device[mode_slot].mode=0U;
+    }
+    auto_request=false;
+    mode_current=mode_yield_poll=true;
+    return true;
+}
 static bool take_request(uint32_t now)
 {
     taskENTER_CRITICAL();
@@ -383,7 +501,9 @@ static bool take_request(uint32_t now)
         }
     taskEXIT_CRITICAL();
     /* Reserve due query slots before ordinary motion: continuous joystick commands cannot starve feedback. */
-    if(take_poll(now))return true;
+    if(mode_yield_poll && take_poll(now)) { mode_yield_poll=false; return true; }
+    if(take_mode_request(now))return true;
+    if(take_poll(now)) { mode_yield_poll=false; return true; }
     taskENTER_CRITICAL();
     for(unsigned i=0;i<queued;++i)if(queue[i].op!=ZP_MOVE || due(now,next_move[queue[i].slot])) { take=(int)i;break; }
     if(take>=0) { current=queue[take];remove_at((unsigned)take);auto_request=false; }
@@ -417,7 +537,20 @@ void Servo_Process(uint32_t now)
     }
     if(phase==TX && (events&SERVO_UART_TX_DONE)) {
         if(!Zp_ExpectsReply(current.op))finish(SERVO_OK,now,NULL);
-        else { ServoUartStatus p; ServoUart_CopyStatus(&p); phase=REPLY; deadline=p.tx_done_ms+SERVO_REPLY_TIMEOUT_MS; }
+        else {
+            ServoUartStatus p;
+            ServoUart_CopyStatus(&p);
+            phase=REPLY;
+            uint32_t timeout=SERVO_REPLY_TIMEOUT_MS;
+            if(current.op==ZP_MODE) {
+                timeout=SERVO_MODE_REPLY_TIMEOUT_MS;
+                if(mode_current && mode_work.probe) {
+                    probe_tx_done_ms=p.tx_done_ms;
+                    timeout=SERVO_MODE_PROBE_TIMEOUT_MS;
+                }
+            }
+            deadline=p.tx_done_ms+timeout;
+        }
     }
     uint8_t data[64];
     for(unsigned batch=0;batch<4;++batch) {
@@ -426,6 +559,11 @@ void Servo_Process(uint32_t now)
         if(n<sizeof(data))break;
     }
     if(phase!=IDLE && due(now,deadline))finish(SERVO_TIMEOUT,now,NULL);
+    if(phase==IDLE && mode_work.ticket && due(now,mode_deadline)) {
+        /* A UART that never recovers must still produce a finite status report. */
+        while(mode_slot<mode_end_slot)mode_work.result[mode_slot++]=SERVO_TIMEOUT;
+        publish_modes();
+    }
     if(phase==IDLE && due(now,guard)) {
         ServoUartStatus p; ServoUart_CopyStatus(&p);
         if(!hardware_ready || !p.ready) {

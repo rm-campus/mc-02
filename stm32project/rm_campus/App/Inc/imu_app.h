@@ -48,11 +48,16 @@ typedef struct
 
 /* 应用任务使用。只有 state==IMU_RUNNING 且 sample_ms 新鲜时才应用于控制。 */
 void Imu_CopyData(ImuData *out);
+/* 从任务请求重新静止校准；ImuTask 消费此标志，处理前的多个请求合并为一次。 */
 void Imu_RequestCalibration(void);
 void Campus_ImuTask(void *argument);
 
 /* 以下是单生产者处理入口，仅 ImuTask 或主机单元测试调用。 */
 void Imu_BeginCalibration(void);
+/** @param sample 传感器坐标系的一次完整测量，加速度 m/s²，角速度 rad/s。
+ * @param dt_s 相邻采样的间隔，应用层接受 (0, 0.02] 秒。
+ * @param sample_ms 采样的毫秒时间戳，供读取方判断新鲜度。
+ * @return false 表示输入或滤波失败；true 也可能仍在收集静止样本，姿态就绪看 state。 */
 bool Imu_ProcessSample(const Bmi088Sample *sample, float dt_s, uint32_t sample_ms);
 void Imu_ReportFault(uint32_t error, bool read_error);
 #endif

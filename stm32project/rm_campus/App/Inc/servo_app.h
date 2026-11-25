@@ -22,10 +22,24 @@ typedef struct {
     uint16_t queued;
     bool initialized, enabled;
 } ServoSnapshot;
+typedef struct {
+    uint32_t ticket;
+    uint8_t requested_mode; /* 0 for a single read-only probe, 1..4 for a position-mode write. */
+    uint8_t mode[SERVO_COUNT]; /* 0 means this batch did not receive a mode. */
+    ServoResult result[SERVO_COUNT];
+    bool probe;
+    uint8_t probe_slot;
+    uint32_t probe_first_ms; /* From UART TX completion to consuming the first RX byte. */
+    uint16_t probe_rx_bytes;
+    uint8_t probe_raw[ZP_FRAME_MAX];
+} ServoModeReport;
 const ServoConfig *Servo_GetConfig(unsigned index);
 const char *Servo_ResultName(ServoResult result);
 ServoResult Servo_MovePulse(uint8_t id, uint16_t position, uint16_t time_ms, uint32_t *ticket);
 ServoResult Servo_RequestPosition(uint8_t id, uint32_t *ticket);
+ServoResult Servo_RequestModes(uint8_t position_mode, uint32_t *ticket);
+ServoResult Servo_RequestModeProbe(uint8_t id, uint32_t *ticket);
+bool Servo_CopyModeReport(uint32_t ticket, ServoModeReport *out);
 ServoResult Servo_Stop(uint8_t id, uint32_t *ticket);
 ServoResult Servo_SetTorque(uint8_t id, bool enabled, uint32_t *ticket);
 ServoResult Servo_Pause(uint8_t id, uint32_t *ticket);
