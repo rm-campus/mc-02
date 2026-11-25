@@ -27,6 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "campus_app.h"
 #include "servo_app.h"
+#include "robot_control_config.h"
 #include "usb_app.h"
 #include "imu_app.h"
 #include "flash_tasks.h"
@@ -156,6 +157,17 @@ void vApplicationMallocFailedHook(void)
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
+#if ROBOT_CONTROL_ENABLE
+  /* 整机模式独占 CAN、UART7、LED 和蜂鸣器，只创建控制所需任务。 */
+  RcTaskHandle = osThreadNew(StartRcTask, NULL, &RcTask_attributes);
+  ChassisTaskHandle = osThreadNew(StartChassisTask, NULL, &ChassisTask_attributes);
+  ServoBusTaskHandle = osThreadNew(StartServoBusTask, NULL, &ServoBusTask_attributes);
+  MonitorTaskHandle = osThreadNew(StartMonitorTask, NULL, &MonitorTask_attributes);
+  StatusTaskHandle = osThreadNew(StartStatusTask, NULL, &StatusTask_attributes);
+  if (!RcTaskHandle || !ChassisTaskHandle || !ServoBusTaskHandle || !MonitorTaskHandle || !StatusTaskHandle)
+    Error_Handler();
+  return;
+#endif
 #ifdef SERVO_ID_SETUP
   /* 改号固件仅启动 USB 任务，由它独占舵机总线。 */
   UsbTaskHandle = osThreadNew(StartUsbTask, NULL, &UsbTask_attributes);

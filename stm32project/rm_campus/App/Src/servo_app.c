@@ -1,4 +1,5 @@
 #include "servo_app.h"
+#include "robot_servo.h"
 #include "servo_rc.h"
 #include "arm_velocity.h"
 #include "main.h"
@@ -262,6 +263,14 @@ ServoResult Servo_ControlMoveGroup(ServoControlOwner owner,const uint8_t *ids,
 }
 /* 兼容现有 CH9 控制接口，其状态位仍仅属于 RC 控制源。 */
 void Servo_RcClaim(uint8_t slots) { (void)Servo_ControlClaim(SERVO_OWNER_RC,slots); }
+#if ROBOT_CONTROL_ENABLE
+void Servo_RobotCancelQueuedGrip(void)
+{
+    taskENTER_CRITICAL();
+    for(unsigned i=0;i<SERVO_COUNT;++i)if(configs[i].id==5U)cancel_moves(i);
+    taskEXIT_CRITICAL();
+}
+#endif
 void Servo_RcStopMask(uint8_t slots) { Servo_ControlStopMask(SERVO_OWNER_RC,slots); }
 uint8_t Servo_RcStopPending(void) { return Servo_ControlStopPending(SERVO_OWNER_RC); }
 uint8_t Servo_RcInhibited(void) { return Servo_ControlInhibited(SERVO_OWNER_RC); }
@@ -515,7 +524,11 @@ void Servo_Process(uint32_t now)
 {
     Arm_Process(now); /* 速度IK独立接收应用层指令；默认关闭。 */
     if(!work.initialized || !SERVO_BUS_ENABLE)return;
+#if ROBOT_CONTROL_ENABLE
+    RobotServo_Process(now);
+#else
     ServoRc_Process(now);
+#endif
     for(unsigned i=0;i<SERVO_COUNT;++i) {
         ServoState *s=&work.device[i];
         if(s->online && (s->failures>=SERVO_FAIL_LIMIT || (uint32_t)(now-s->position_ms)>=SERVO_POSITION_STALE_MS)) {
@@ -583,7 +596,18 @@ void Servo_Process(uint32_t now)
                 char frame[ZP_FRAME_MAX];
                 size_t n=Zp_Build(frame,sizeof(frame),current.op,s->id,current.position,current.time_ms);
                 line_length=0;
-                if(!n || !ServoUart_Send(frame,(uint16_t)n))finish(SERVO_TX_ERROR,now,NULL);
+#if ROBOT_CONTROL_ENABLE
+                taskENTER_CRITICAL();
+                bool obsolete = current.op==ZP_MOVE && current.owner==SERVO_OWNER_RC &&
+                    !RobotServo_CanTransmit(s->id, HAL_GetTick());
+                bool sent = !obsolete && n && ServoUart_Send(frame,(uint16_t)n);
+                taskEXIT_CRITICAL();
+                /* 切档撤销排队动作是正常操作，不能触发驱动错误路径的 PDST。 */
+                if(obsolete) { publish(now); return; }
+#else
+                bool sent = n && ServoUart_Send(frame,(uint16_t)n);
+#endif
+                if(!sent)finish(SERVO_TX_ERROR,now,NULL);
                 else {
                     phase=TX; deadline=now+SERVO_TX_TIMEOUT_MS;
                     if(current.op==ZP_MOVE)next_move[current.slot]=now+SERVO_MOVE_INTERVAL_MS;

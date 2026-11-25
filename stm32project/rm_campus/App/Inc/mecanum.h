@@ -1,6 +1,11 @@
 #ifndef MECANUM_H
 #define MECANUM_H
 #include <stdint.h>
+#include "robot_control_config.h"
+#if ROBOT_CONTROL_ENABLE
+#include "robot_control.h"
+void Mecanum_RobotTargets(const RobotControlState *state, float max_speed, float target_by_id[4]);
+#endif
 
 /* vertical/horizontal/turn 分别是 CH2 前后、CH4 左右、CH1 旋转（-660～660）。
  * 三轴分别使用 deadband。旋转为归一化轮速分量，正值对应俯视顺时针。

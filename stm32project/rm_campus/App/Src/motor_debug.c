@@ -112,6 +112,13 @@ void MotorDebug_Step(MotorDebug *d, const MotorDebugConfig *c, const MotorDebugI
         return;
     }
 
+#if ROBOT_CONTROL_ENABLE
+    if (!in->robot_drive_enabled) {
+        stop(d, MOTOR_DEBUG_OK);
+        return;
+    }
+    d->state = MOTOR_DEBUG_RUNNING;
+#else
     if (in->enable_switch != -1) {
         /* 三档开关从 +1 经过 0 到 -1 时保留关闭确认；
          * 从运行态回到 MIDDLE 则撤销确认，必须再次到 +1。 */
@@ -142,6 +149,7 @@ void MotorDebug_Step(MotorDebug *d, const MotorDebugConfig *c, const MotorDebugI
         }
         d->state = MOTOR_DEBUG_RUNNING;
     }
+#endif
     d->target = in->target_rad_s;
     const float dt = (float)in->period_ms * 0.001f;
     d->reference = d->target; /* 目标直接进入速度环；运行中回中时，PI 仍可输出制动电流。 */

@@ -11,6 +11,9 @@
 #ifndef ARM_VELOCITY_IK_OUTPUT_ENABLE
 #define ARM_VELOCITY_IK_OUTPUT_ENABLE 0
 #endif
+#if ROBOT_CONTROL_ENABLE && (ARM_VELOCITY_IK_ENABLE || ARM_VELOCITY_IK_OUTPUT_ENABLE)
+#error "Robot direct joint mode and velocity IK are exclusive"
+#endif
 #ifndef ARM_JOINT_CALIBRATION_VALID
 #define ARM_JOINT_CALIBRATION_VALID 0
 #endif

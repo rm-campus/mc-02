@@ -66,6 +66,10 @@ void Servo_RcStopMask(uint8_t slots);
 uint8_t Servo_RcStopPending(void);
 uint8_t Servo_RcInhibited(void);
 void Servo_RcClearInhibit(void);
+#if ROBOT_CONTROL_ENABLE
+/* 撤销还在等待发送的夹爪目标，保持已经交给舵机的位置与扭矩。 */
+void Servo_RobotCancelQueuedGrip(void);
+#endif
 ServoResult Servo_RcMovePulse(uint8_t id, uint16_t position, uint16_t time_ms, uint32_t *ticket);
 /* Only ServoBusTask calls Init/Process. Exposed for deterministic host testing. */
 bool Servo_Init(void);

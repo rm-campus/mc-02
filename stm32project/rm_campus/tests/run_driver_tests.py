@@ -45,6 +45,9 @@ uint32_t HAL_GetTick(void);
 #include "cmsis_os2.h"
 #include "fxi6x.h"
 #include "motor_3508.h"
+#if ROBOT_CONTROL_ENABLE
+#include "robot_control.h"
+#endif
 
 UART_HandleTypeDef huart5;
 static SCB_Type scb;
@@ -166,6 +169,18 @@ int main(void)
     assert(starts == 2 && rc.uart_error_count == 1 && !rc.valid);
     feed(f, 25); assert(Fxi6x_Update());
     test_channel_values();
+#if ROBOT_CONTROL_ENABLE
+    /* 同一次 DMA 处理依次含失控和正常帧，最终快照有效也要丢弃旧启动资格。 */
+    make_frame(f);
+    for (unsigned n=0; n<3; ++n) { tick+=25; feed(f,25); assert(Fxi6x_Update()); }
+    assert(RobotControl_Get(tick).mode==ROBOT_ARM);
+    f[23]=8; feed(f,25); f[23]=0; feed(f,25); assert(Fxi6x_Update());
+    Fxi6x_CopyData(&rc); assert(rc.valid && !RobotControl_Get(tick).ready);
+    for (unsigned n=0; n<2; ++n) { tick+=25; feed(f,25); assert(Fxi6x_Update()); }
+    assert(RobotControl_Get(tick).ready);
+    HAL_UART_ErrorCallback(&huart5); Fxi6x_Update();
+    assert(!RobotControl_Get(tick).ready);
+#endif
 
     Motor3508 motor; Motor3508_Init(&motor, 1U);
     Motor3508_SetCurrent(&motor, 0, 20000);
@@ -197,3 +212,7 @@ cmd = [str(compiler), '-std=c11', '-Wall', '-Wextra', '-Werror', '-I' + str(out)
        '-lm', '-o', str(out / 'driver_tests.exe')]
 subprocess.run(cmd, check=True, timeout=30)
 subprocess.run([str(out / 'driver_tests.exe')], check=True, timeout=10)
+robot_exe = out / 'robot_driver_tests.exe'
+subprocess.run([*cmd[:-2], '-DROBOT_CONTROL_ENABLE=1', '-I' + str(root/'App/Inc'),
+                str(root/'App/Src/robot_control.c'), '-o', str(robot_exe)], check=True, timeout=30)
+subprocess.run([str(robot_exe)], check=True, timeout=10)

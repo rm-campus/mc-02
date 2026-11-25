@@ -58,4 +58,6 @@ void Fxi6x_CopyData(Fxi6x_Data *out);
 /* 每个完整候选帧解析结束后调用，运行于 RcTask；默认弱实现为空。
  * 指针仅在调用期间有效，不允许在钩子里做 Flash/USB 阻塞操作。 */
 void Fxi6x_OnFrame(const Fxi6x_Data *data);
+/* RcTask 在接收流中断、溢出或候选帧失同步时调用。默认弱实现为空。 */
+void Fxi6x_OnStreamBreak(void);
 #endif

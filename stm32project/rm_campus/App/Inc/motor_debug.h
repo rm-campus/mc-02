@@ -35,6 +35,7 @@ typedef struct {
 typedef struct {
     uint32_t now_ms, period_ms;
     bool rc_valid, rc_received, motor_received, can_ok;
+    bool robot_drive_enabled; /* 整机模式由当前档位及总线恢复状态决定。 */
     uint32_t rc_ms, feedback_ms;
     int8_t enable_switch; /* +1 关闭，0 中档，-1 启用。 */
     int16_t stick;        /* -660～660。 */

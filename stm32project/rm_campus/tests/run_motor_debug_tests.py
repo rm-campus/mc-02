@@ -123,6 +123,14 @@ def main():
             ], check=True, timeout=30)
             subprocess.run([str(exe)], check=True, timeout=10)
         exe = folder / "four_usb.exe"
+        robot = folder / "integrated_chassis.exe"
+        subprocess.run([args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                        "-DROBOT_CONTROL_ENABLE=1", "-I"+str(folder), "-I"+str(root/"App/Inc"),
+                        "-I"+str(root/"Bsp/Inc"), *[str(root/p) for p in
+                        ["tests/robot_chassis_test.c", "App/Src/campus_app.c", "App/Src/robot_control.c",
+                         "App/Src/motor_debug.c", "App/Src/mecanum.c", "Bsp/Src/motor_3508.c"]],
+                        "-lm", "-o", str(robot)],check=True,timeout=30)
+        subprocess.run([str(robot)],check=True,timeout=10)
         subprocess.run([
             args.cc, "-std=c11", "-DSERVO_USB_DEBUG_ENABLE=0", "-DSERVO_RC_ENABLE=0", "-DSERVO_RC_ENABLE=0", "-O2", "-Wall", "-Wextra", "-Werror", "-DMOTOR_DEBUG_MODE=1",
             "-I" + str(folder), "-I" + str(root / "App/Inc"), "-I" + str(root / "Bsp/Inc"),

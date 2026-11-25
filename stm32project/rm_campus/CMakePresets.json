@@ -25,6 +25,13 @@
             }
         },
         {
+            "name": "RobotControl",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "ROBOT_CONTROL_PROFILE": "ON"
+            }
+        },
+        {
             "name": "ServoId",
             "inherits": "Release",
             "cacheVariables": {
@@ -40,6 +47,10 @@
         {
             "name": "Release",
             "configurePreset": "Release"
+        },
+        {
+            "name": "RobotControl",
+            "configurePreset": "RobotControl"
         },
         {
             "name": "ServoId",

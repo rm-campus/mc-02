@@ -1,0 +1,53 @@
+#ifndef ROBOT_CONTROL_CONFIG_H
+#define ROBOT_CONTROL_CONFIG_H
+
+/* 置 1 选择整机遥控，置 0 使用原调试配置。RobotControl 构建预设单独置 1。 */
+#ifndef ROBOT_CONTROL_ENABLE
+#define ROBOT_CONTROL_ENABLE 0
+#endif
+#if ROBOT_CONTROL_ENABLE != 0 && ROBOT_CONTROL_ENABLE != 1
+#error "ROBOT_CONTROL_ENABLE must be 0 or 1"
+#endif
+#if ROBOT_CONTROL_ENABLE && defined(SERVO_ID_SETUP)
+#error "Robot control and servo ID setup are exclusive"
+#endif
+
+/* CH9 的物理上、中、下档；若遥控器通道反向，交换上下档两个值。 */
+#define ROBOT_SWITCH_UP       1
+#define ROBOT_SWITCH_MIDDLE   0
+#define ROBOT_SWITCH_DOWN   (-1)
+#define ROBOT_LINK_MIN_FRAMES 3U
+#define ROBOT_LINK_MIN_MS    50U
+#define ROBOT_LINK_TIMEOUT_MS 100U
+#define ROBOT_SWITCH_STABLE_MS 30U
+
+/* 轮端 rpm、车体角速度 °/s。上下档各自可调。尺寸单位 m，轮心到轮心的全距。 */
+#ifndef ROBOT_CHASSIS_MAX_WHEEL_RPM
+#define ROBOT_CHASSIS_MAX_WHEEL_RPM 400.0f
+#endif
+#ifndef ROBOT_UPPER_MAX_YAW_DEG_S
+#define ROBOT_UPPER_MAX_YAW_DEG_S 90.0f
+#endif
+#ifndef ROBOT_LOWER_MAX_YAW_DEG_S
+#define ROBOT_LOWER_MAX_YAW_DEG_S 30.0f
+#endif
+#define ROBOT_WHEEL_RADIUS_M 0.075f
+/* 未填实车尺寸时按旧麦轮的轮端转速比例转向；上、下档可分别调整。 */
+#ifndef ROBOT_UPPER_TURN_FRACTION
+#define ROBOT_UPPER_TURN_FRACTION 1.0f
+#endif
+#ifndef ROBOT_LOWER_TURN_FRACTION
+#define ROBOT_LOWER_TURN_FRACTION (1.0f / 3.0f)
+#endif
+#ifndef ROBOT_WHEELBASE_M
+#define ROBOT_WHEELBASE_M 0.0f
+#endif
+#ifndef ROBOT_TRACK_M
+#define ROBOT_TRACK_M 0.0f
+#endif
+/* 暂按现有 ID5 协议上限试配，尚未验证闭合方向/机械端点；标定后填实测 P。
+ * 可置 0 单独停用夹爪控制。该值绝不用于改写舵机的内部参数。 */
+#ifndef ROBOT_GRIPPER_CLOSED_P
+#define ROBOT_GRIPPER_CLOSED_P 2500U
+#endif
+#endif

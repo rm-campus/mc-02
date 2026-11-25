@@ -45,6 +45,8 @@ __attribute__((weak)) void Fxi6x_OnFrame(const Fxi6x_Data *data)
     (void)data;
 }
 
+__attribute__((weak)) void Fxi6x_OnStreamBreak(void) {}
+
 /**
  * @brief 通知 RcTask 缓冲区或异常状态有变化。
  * 在接收回调中调用；使用允许从 ISR 调用的线程标志置位接口。
@@ -82,6 +84,7 @@ static void clear_controls(void)
  */
 bool Fxi6x_Init(void)
 {
+    Fxi6x_OnStreamBreak();
     s_task = osThreadGetId();
     /* 先停旧接收再重建索引，避免旧 DMA 继续写入而软件已从头计数。 */
     (void)HAL_UART_AbortReceive(&huart5);
@@ -276,6 +279,7 @@ bool Fxi6x_Update(void)
         s_overflow = false;
         clear_controls();
         taskEXIT_CRITICAL();
+        Fxi6x_OnStreamBreak();
     }
     bool got = false;
     /* 每轮处理有界，避免高优先级任务因异常数据一直运行。 */
@@ -301,6 +305,7 @@ bool Fxi6x_Update(void)
             else
             {
                 /* 错位时滑动一字节，重新寻找帧头。 */
+                Fxi6x_OnStreamBreak();
                 memmove(s_frame, s_frame + 1, FRAME_SIZE - 1U);
                 s_len = FRAME_SIZE - 1U;
                 while (s_len > 0U && s_frame[0] != 0x0FU)

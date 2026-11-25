@@ -8,6 +8,11 @@
 #include "campus_app.h"
 #include "can.h"
 #include "led.h"
+#include "robot_control_config.h"
+#if ROBOT_CONTROL_ENABLE
+#include "robot_control.h"
+#include "buzzer.h"
+#endif
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -206,7 +211,7 @@ void Campus_ChassisTask(void *argument)
 {
     (void)argument;
     const MotorDebugConfig base = MotorDebug_DefaultConfig();
-#if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
+#if ROBOT_CONTROL_ENABLE || MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
     const uint8_t selected = 0U, active_mask = 0x0FU;
 #else
     const uint8_t selected = base.motor_id >= 1U && base.motor_id <= 4U ? base.motor_id - 1U : 0U;
@@ -217,20 +222,32 @@ void Campus_ChassisTask(void *argument)
     frame.active_mask = active_mask;
     frame.motor_id = base.motor_id;
     for (uint8_t i = 0; i < 4U; ++i) {
-#if MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
+#if ROBOT_CONTROL_ENABLE || MOTOR_DEBUG_MODE == MOTOR_DEBUG_MODE_FOUR
         configs[i] = MotorDebug_WheelConfig(i + 1U);
 #else
         configs[i] = base;
+#endif
+#if ROBOT_CONTROL_ENABLE
+        configs[i].enabled = true;
+        configs[i].max_speed = MOTOR_DEBUG_RPM_TO_RAD_S(ROBOT_CHASSIS_MAX_WHEEL_RPM);
 #endif
         MotorDebug_Init(&frame.wheel[i].control);
         if ((active_mask & (1U << i)) == 0U) frame.wheel[i].control.state = MOTOR_DEBUG_DISABLED;
     }
     TickType_t wake = xTaskGetTickCount();
     uint32_t previous_ms = HAL_GetTick();
+#if ROBOT_CONTROL_ENABLE
+    uint32_t drive_generation = 0;
+#endif
     for (;;) {
         Fxi6x_Data rc;
         Motor3508 motors;
+#if ROBOT_CONTROL_ENABLE
+        RobotControlState robot = RobotControl_Get(HAL_GetTick());
+        rc = robot.rc;
+#else
         Fxi6x_CopyData(&rc);
+#endif
         Campus_CopyMotors(&motors);
         const bool can_ok = sample_can_status();
         const uint32_t now = HAL_GetTick();
@@ -239,6 +256,15 @@ void Campus_ChassisTask(void *argument)
         const uint8_t recovery_mask = tx_allowed ? Can_RecoveryOutputMask() : 0U;
         const uint8_t previous_running = frame.running_mask;
         frame.running_mask = 0U;
+#if ROBOT_CONTROL_ENABLE
+        float targets[4];
+        Mecanum_RobotTargets(&robot, configs[0].max_speed, targets);
+        frame.mecanum_mode = robot.mode == ROBOT_DRIVE || robot.mode == ROBOT_WRIST;
+        if (drive_generation != robot.generation) {
+            for (unsigned i=0;i<4U;++i) MotorDebug_Init(&frame.wheel[i].control);
+            drive_generation=robot.generation;
+        }
+#else
         frame.common_target = (float)rc.rocker_l_v * (base.max_speed / 660.0f);
         float targets[4] = {frame.common_target, frame.common_target,
                             frame.common_target, frame.common_target};
@@ -250,10 +276,14 @@ void Campus_ChassisTask(void *argument)
                         base.deadband, base.max_speed, targets);
         }
 #endif
+#endif
         for (uint8_t i = 0; i < 4U; ++i) {
             MotorDebugInput *input = &frame.wheel[i].input;
             *input = (MotorDebugInput){
                 .now_ms = now, .period_ms = (uint32_t)(now - previous_ms),
+#if ROBOT_CONTROL_ENABLE
+                .robot_drive_enabled = robot.ready && frame.mecanum_mode && (recovery_mask & (1U<<i)),
+#endif
                 .rc_valid = rc.valid, .rc_received = rc.received,
                 .motor_received = (motors.received_mask & (1U << i)) != 0U,
                 .can_ok = can_ok, .rc_ms = rc.last_valid_ms,
@@ -346,6 +376,31 @@ void Campus_StatusTask(void *argument)
 {
     (void)argument;
     (void)Led_Init();
+#if ROBOT_CONTROL_ENABLE
+    uint32_t ready_count = 0, beep_start = 0;
+    bool beeping = false;
+    for (;;) {
+        uint32_t now = HAL_GetTick();
+        RobotControlState s = RobotControl_Get(now);
+        if (s.ready && ready_count != s.ready_count) {
+            ready_count = s.ready_count;
+            Buzzer_Set(true);
+            beeping = true;
+            beep_start = now;
+        }
+        if (beeping && (!s.ready || now - beep_start >= 100U)) {
+            Buzzer_Set(false);
+            beeping = false;
+        }
+        switch (s.mode) {
+        case ROBOT_DRIVE: (void)Led_SetRGB(0, 20, 0); break;
+        case ROBOT_ARM: (void)Led_SetRGB(0, 0, 20); break;
+        case ROBOT_WRIST: (void)Led_SetRGB(0, 16, 16); break;
+        default: (void)Led_SetRGB(24, 0, 0); break;
+        }
+        osDelay(10U);
+    }
+#else
     for (;;)
     {
         CampusStatus status;
@@ -369,4 +424,5 @@ void Campus_StatusTask(void *argument)
         /* 状态指示不参与快速控制；每 50 tick 更新一次，给高优先级任务让出 CPU。 */
         osDelay(50U);
     }
+#endif
 }

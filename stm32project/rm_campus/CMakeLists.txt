@@ -75,6 +75,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/servo_uart.c
     Bsp/Src/zp_servo.c
     App/Src/servo_app.c
+    App/Src/robot_control.c
+    App/Src/robot_servo.c
+    Bsp/Src/buzzer.c
     Algorithm/Src/arm_kinematics.c
     App/Src/arm_velocity.c
     App/Src/arm_usb.c
@@ -114,6 +117,14 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ARM_MATH_MATRIX_CHECK)
 
 option(SERVO_ID_SETUP "Build the standalone UART7 servo ID setup firmware" OFF)
+option(ROBOT_CONTROL_PROFILE "Build the dedicated CH9 whole robot firmware" OFF)
+if(ROBOT_CONTROL_PROFILE)
+    if(SERVO_ID_SETUP)
+        message(FATAL_ERROR "Robot control and servo ID setup are exclusive")
+    endif()
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ROBOT_CONTROL_ENABLE=1)
+    set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME "rm_campus_robot")
+endif()
 if(SERVO_ID_SETUP)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE App/Src/servo_id_setup.c)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE SERVO_ID_SETUP)

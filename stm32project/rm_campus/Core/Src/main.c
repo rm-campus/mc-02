@@ -30,6 +30,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "campus_app.h"
+#include "robot_control_config.h"
+#include "tim.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -105,6 +107,9 @@ int main(void)
   MX_FDCAN1_Init();
   MX_OCTOSPI2_Init();
   MX_UART7_Init();
+#if ROBOT_CONTROL_ENABLE
+  MX_TIM12_Init();
+#endif
   /* USER CODE BEGIN 2 */
 #ifndef SERVO_ID_SETUP
 /* 接通 CAN 和电机反馈；尚不发送非零电流。 */
