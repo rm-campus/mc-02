@@ -52,18 +52,19 @@
 #define SERVO_RC_TIMEOUT_MS 100U
 #define SERVO_RC_MAX_PERIOD_MS 50U
 /* ID1..5 的摇杆正向对应 P 增加(+1)或减小(-1)，最大协议角速度 deg/s。
- * 不增加底盘 yaw 舵机。下方位置范围仍是协议范围，装配后必须逐轴收窄。 */
+ * 不增加底盘 yaw 舵机。各设备的位置范围见下表。 */
 #define SERVO_RC_AXIS_TABLE \
     {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}
 #define SERVO_COUNT 5U
-/* 先逐台配置 ID，再并联。这里只描述设备，不向舵机写 ID/波特率/模式/PID。 */
+/* 先逐台配置 ID，再并联。这里只描述设备，不向舵机写 ID/波特率/模式/PID。
+ * ID3 肩关节以 P1500 为中心。270° 位置模式下向内取整，90° 对应 666 P。 */
 #define SERVO_DEVICE_TABLE \
     {1U, "ZP30", 500U, 2500U}, \
     {2U, "ZP35", 500U, 2500U}, \
-    {3U, "ZP45", 500U, 2500U}, \
+    {3U, "ZP45", 834U, 2166U}, \
     {4U, "ZP25S", 500U, 2500U}, \
     {5U, "ZP25S", 500U, 2500U}
-/* 上表是协议限位，安装后的机械软限位必须按各关节标定后收窄。 */
+/* 500～2500 是协议范围，装配后仍需按实测机械行程逐轴标定。 */
 #define SERVO_QUEUE_SIZE 16U
 #define SERVO_RX_RING_SIZE 256U
 #define SERVO_TX_TIMEOUT_MS 20U

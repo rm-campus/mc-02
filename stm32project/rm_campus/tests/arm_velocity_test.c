@@ -211,8 +211,9 @@ static void tracking(void)
 }
 static void mechanical_limit(void)
 {
-    positions[2]=2348;run(150);start_arm();
-    float q1=(2348.0f-1500.0f)*ARM_DEG_TO_RAD(270.0f)/2000.0f;
+    const uint16_t shoulder_max=Servo_GetConfig(2)->maximum;
+    positions[2]=shoulder_max;run(150);start_arm();
+    float q1=(shoulder_max-1500.0f)*ARM_DEG_TO_RAD(270.0f)/2000.0f;
     ArmVelocityCommand command={
         .vx_m_s=(-ARM_L12_M*sinf(q1)-ARM_L23_M*sinf(q1+ARM_PI/2))*0.15f,
         .vz_m_s=(ARM_L12_M*cosf(q1)+ARM_L23_M*cosf(q1+ARM_PI/2))*0.15f,

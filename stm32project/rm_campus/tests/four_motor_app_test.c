@@ -105,9 +105,10 @@ void vTaskDelayUntil(TickType_t *wake,TickType_t delta)
             const float mixed[] = {1.0f/3, 1.0f/3, 1.0f, -1.0f/3};
             assert(d.running_mask==15);
             for (unsigned i=0;i<4;++i) {
-                float expected = (i==0 || i==2) ? 0.5f : -0.5f;
+                const float turn_sign = (i==0 || i==2) ? 1.0f : -1.0f;
+                float expected = turn_sign * (360.0f / 660.0f);
                 if (now>710) expected = -expected;
-                if (now>720) expected = 0;
+                if (now>720) expected = -turn_sign * (60.0f / 660.0f);
                 if (now>730) expected = mixed[i];
                 if (now>740) expected = 0.5f;
                 assert(fabsf(d.wheel[i].control.target - expected*MOTOR_DEBUG_MAX_SPEED)<0.001f);

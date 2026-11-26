@@ -211,6 +211,8 @@ int main(void)
     for(unsigned i=1;i<=5;++i){ServoState s=state((uint8_t)i);assert(s.online&&s.position==1500&&s.mode_valid&&s.mode==1&&s.version_valid);}
     assert(moves==0); /* Startup only queried, no movement/config writes. */
     assert(Servo_MovePulse(1,499,1000,&ticket)==SERVO_RANGE);
+    assert(Servo_MovePulse(3,833,1000,&ticket)==SERVO_RANGE);
+    assert(Servo_MovePulse(3,2167,1000,&ticket)==SERVO_RANGE);
     assert(Servo_MovePulse(1,1500,10000,&ticket)==SERVO_RANGE);
     assert(Servo_RequestPosition(255,&ticket)==SERVO_INVALID);
     assert(Servo_MovePulse(1,1600,1000,&ticket)==SERVO_QUEUED);

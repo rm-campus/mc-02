@@ -17,7 +17,7 @@ static void frames(void)
     Fxi6x_Data rc={.valid=true,.received=true,.last_valid_ms=now,.frame_count=now+1,
         .switch_a=1,.switch_c=now<100?ROBOT_SWITCH_UP:now<200?ROBOT_SWITCH_MIDDLE:ROBOT_SWITCH_DOWN,
         .rocker_l_v=(now>=70 && now<90) ? 330 : ROBOT_CHASSIS_DEADBAND,
-        .rocker_l_h=0,.rocker_r_h=now<200?0:ROBOT_CHASSIS_DEADBAND+15};
+        .rocker_l_h=0,.rocker_r_h=now<200?0:15};
     if(now<=300 && now%10U==0) Fxi6x_OnFrame(&rc);
 }
 

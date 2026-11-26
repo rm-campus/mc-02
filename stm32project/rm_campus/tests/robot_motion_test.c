@@ -34,8 +34,14 @@ static void wheels(void)
     s.mode=ROBOT_WRIST; s.rc.rocker_l_v=660; s.rc.rocker_l_h=660;
     Mecanum_RobotTargets(&s,cap,v);
     assert(fabsf(v[0]-lower)<0.001f && v[1]==-v[0] && v[2]==v[0] && v[3]==-v[0]);
+    s.rc.rocker_r_h=-1;
+    Mecanum_RobotTargets(&s,cap,v);
+    assert(fabsf(v[0]+lower/660.0f)<0.001f && v[0]<0 && v[1]==-v[0]);
     s.mode=ROBOT_DRIVE; s.rc.rocker_l_h=-1; s.rc.rocker_r_h=1;
     s.rc.rocker_l_v=ROBOT_CHASSIS_DEADBAND;
+    Mecanum_RobotTargets(&s,cap,v);
+    assert(fabsf(v[0]-upper/660.0f)<0.001f && v[0]>0 && v[1]==-v[0]);
+    s.rc.rocker_r_h=0;
     Mecanum_RobotTargets(&s,cap,v); assert(v[0]==0 && v[1]==0 && v[2]==0 && v[3]==0);
     s.rc.rocker_l_v=ROBOT_CHASSIS_DEADBAND+1;
     Mecanum_RobotTargets(&s,cap,v); assert(v[0]>0 && v[0]==v[3]);
@@ -93,10 +99,15 @@ int main(void)
     shoulder_before=positions[2];
     operate(450);
     assert(positions[2]==shoulder_before && !state(3).online && Servo_RcInhibited()==0U);
-    positions[2]=700;
+    positions[2]=850;
     reply_mask|=4U;
-    for(unsigned elapsed=0;positions[2]==700 && elapsed<1500U;++elapsed) operate(1);
-    assert(positions[2]>700 && positions[2]<720 && Servo_RcInhibited()==0U);
+    for(unsigned elapsed=0;positions[2]==850 && elapsed<1500U;++elapsed) operate(1);
+    assert(positions[2]>850 && positions[2]<870 && Servo_RcInhibited()==0U);
+    /* 在中档持续打满肩关节摇杆，分别验证上下限与反向退出。 */
+    rc.rocker_l_v=660; operate(7000);
+    assert(positions[2]==2166 && state(3).target==2166);
+    rc.rocker_l_v=-660; operate(8000);
+    assert(positions[2]==834 && state(3).target==834);
     assert(!depth);
     puts("PASS: robot chassis neutral, gripper pickup/hold, mode-independent servo motion and same-gear recovery");
     return 0;

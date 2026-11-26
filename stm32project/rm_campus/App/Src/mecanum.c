@@ -32,7 +32,7 @@ void Mecanum_Mix(int16_t vertical, int16_t horizontal, int16_t turn, int16_t dea
 {
     mix(MECANUM_FORWARD_SIGN * stick_fraction(vertical, deadband),
         MECANUM_RIGHT_SIGN * stick_fraction(horizontal, deadband),
-        MECANUM_TURN_SIGN * stick_fraction(turn, deadband), max_speed, target_by_id);
+        MECANUM_TURN_SIGN * stick_fraction(turn, 0), max_speed, target_by_id);
 }
 
 #if ROBOT_CONTROL_ENABLE
@@ -48,7 +48,7 @@ void Mecanum_RobotTargets(const RobotControlState *s, float max_speed, float tar
             ratio=yaw*(3.14159265f/180.0f)*(ROBOT_WHEELBASE_M+ROBOT_TRACK_M)/
                   (2.0f*ROBOT_WHEEL_RADIUS_M*max_speed);
         }
-        turn=MECANUM_TURN_SIGN*stick_fraction(s->rc.rocker_r_h, ROBOT_CHASSIS_DEADBAND)*
+        turn=MECANUM_TURN_SIGN*stick_fraction(s->rc.rocker_r_h, 0)*
              fminf(1.0f,fmaxf(0.0f,ratio));
         if (upper) {
             forward=MECANUM_FORWARD_SIGN*stick_fraction(s->rc.rocker_l_v, ROBOT_CHASSIS_DEADBAND);
