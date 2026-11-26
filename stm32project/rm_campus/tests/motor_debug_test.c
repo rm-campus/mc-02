@@ -24,6 +24,8 @@ static void reset(void)
 {
     c = MotorDebug_DefaultConfig();
     c.enabled = true; c.kp = 0.5f; c.ki = 0.4f;
+    /* 线性映射与故障类用例要"参考=目标"，斜坡行为另有专门用例覆盖。 */
+    c.ramp_weight = 0.0f;
     in = (MotorDebugInput){.rc_valid=true, .rc_received=true, .motor_received=true,
         .can_ok=true, .enable_switch=-1, .temperature=25};
     MotorDebug_Init(&d);
@@ -160,12 +162,42 @@ static void continuous_running(void)
     }
 }
 
+static void ramp_weight_checks(void)
+{
+    const float increment = MOTOR_DEBUG_ACCEL * 0.001f; /* 1 ms 周期下的最大增量。 */
+
+    /* 默认小权重：阶跃被部分削弱，但首个周期仍保留大部分目标，稳态等于目标。 */
+    reset(); c.ramp_weight = MOTOR_DEBUG_RAMP_WEIGHT;
+    assert(c.ramp_weight > 0.0f && c.ramp_weight < 1.0f);
+    arm(); in.stick = 660;
+    step(1);
+    assert(fabsf(d.ramped - increment) < 1e-4f);
+    assert(fabsf(d.reference - (d.target + c.ramp_weight * (increment - d.target))) < 1e-4f);
+    assert(d.reference > d.target * 0.5f); /* 跟随没有被整体拖慢。 */
+    for (unsigned n = 0; n < 4000U; ++n) step(1);
+    assert(fabsf(d.reference - c.max_speed) < 1e-3f);
+
+    /* 权重 1 即原始完整速率限幅。 */
+    reset(); c.ramp_weight = 1.0f; arm(); in.stick = 660;
+    step(1);
+    assert(fabsf(d.reference - increment) < 1e-4f);
+
+    /* 权重 0 完全关闭斜坡，回到直接使用目标。 */
+    reset(); c.ramp_weight = 0.0f; arm(); in.stick = 660;
+    step(1);
+    assert(fabsf(d.reference - c.max_speed) < 1e-5f);
+
+    /* 超出 0～1 的权重必须判为配置错误，不能静默截断。 */
+    reset(); c.ramp_weight = 1.5f; in.stick = 0; step(1);
+    assert(d.reason == MOTOR_DEBUG_BAD_CONFIG && d.command_raw == 0);
+}
+
 int main(void)
 {
     MotorDebugConfig defaults=MotorDebug_DefaultConfig();
     assert(defaults.enabled && defaults.kp == MOTOR_DEBUG_KP && defaults.ki == MOTOR_DEBUG_KI);
     assert(fabsf(defaults.max_speed * 60.0f / 6.283185307179586f - 400.0f) < 0.001f);
-    safety(); step_target_and_pi(); continuous_running();
+    safety(); step_target_and_pi(); ramp_weight_checks(); continuous_running();
     reset(); arm();
     for (int stick = -660; stick <= 660; ++stick) {
         in.stick=(int16_t)stick; step(1);
@@ -179,6 +211,6 @@ int main(void)
     for (unsigned n=0;n<299;++n) step(1);
     assert(d.state != MOTOR_DEBUG_RUNNING);
     step(1); assert(d.state == MOTOR_DEBUG_RUNNING);
-    printf("PASS: CAN_FAULT protection=%d; arming, linear mapping, faults, direct speed reference, PI, 60s continuous operation and tick wrap.\n", MOTOR_DEBUG_CAN_FAULT_ENABLE);
+    printf("PASS: CAN_FAULT protection=%d; arming, linear mapping, faults, weak accel ramp, PI, 60s continuous operation and tick wrap.\n", MOTOR_DEBUG_CAN_FAULT_ENABLE);
     return 0;
 }

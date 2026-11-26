@@ -259,6 +259,8 @@ void Campus_ChassisTask(void *argument)
 #if ROBOT_CONTROL_ENABLE
         float targets[4];
         Mecanum_RobotTargets(&robot, configs[0].max_speed, targets);
+        const bool drive_neutral = targets[0] == 0.0f && targets[1] == 0.0f &&
+                                   targets[2] == 0.0f && targets[3] == 0.0f;
         frame.mecanum_mode = robot.mode == ROBOT_DRIVE || robot.mode == ROBOT_WRIST;
         if (drive_generation != robot.generation) {
             for (unsigned i=0;i<4U;++i) MotorDebug_Init(&frame.wheel[i].control);
@@ -283,6 +285,7 @@ void Campus_ChassisTask(void *argument)
                 .now_ms = now, .period_ms = (uint32_t)(now - previous_ms),
 #if ROBOT_CONTROL_ENABLE
                 .robot_drive_enabled = robot.ready && frame.mecanum_mode && (recovery_mask & (1U<<i)),
+                .robot_drive_neutral = drive_neutral,
 #endif
                 .rc_valid = rc.valid, .rc_received = rc.received,
                 .motor_received = (motors.received_mask & (1U << i)) != 0U,

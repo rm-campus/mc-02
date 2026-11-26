@@ -34,7 +34,10 @@ static void wheels(void)
     s.mode=ROBOT_WRIST; s.rc.rocker_l_v=660; s.rc.rocker_l_h=660;
     Mecanum_RobotTargets(&s,cap,v);
     assert(fabsf(v[0]-lower)<0.001f && v[1]==-v[0] && v[2]==v[0] && v[3]==-v[0]);
-    s.mode=ROBOT_DRIVE; s.rc.rocker_l_h=s.rc.rocker_r_h=0; s.rc.rocker_l_v=1;
+    s.mode=ROBOT_DRIVE; s.rc.rocker_l_h=-1; s.rc.rocker_r_h=1;
+    s.rc.rocker_l_v=ROBOT_CHASSIS_DEADBAND;
+    Mecanum_RobotTargets(&s,cap,v); assert(v[0]==0 && v[1]==0 && v[2]==0 && v[3]==0);
+    s.rc.rocker_l_v=ROBOT_CHASSIS_DEADBAND+1;
     Mecanum_RobotTargets(&s,cap,v); assert(v[0]>0 && v[0]==v[3]);
     s.mode=ROBOT_ARM; Mecanum_RobotTargets(&s,cap,v); assert(v[0]==0 && v[1]==0 && v[2]==0 && v[3]==0);
     MotorDebug d;MotorDebug_Init(&d);
@@ -42,12 +45,20 @@ static void wheels(void)
     MotorDebugInput in={.rc_received=true,.rc_valid=true,.motor_received=true,.robot_drive_enabled=true,
         .can_ok=true,.enable_switch=1,.temperature=30,.period_ms=1,.now_ms=1,.stick=600,.target_rad_s=cap};
     MotorDebug_Step(&d,&config,&in);assert(d.state==MOTOR_DEBUG_RUNNING && d.command_raw>0);
+    in.robot_drive_neutral=true; in.target_rad_s=0.0f;
+    in.now_ms=2; in.speed=0.5f;
+    MotorDebug_Step(&d,&config,&in);
+    assert(d.reference==0.0f && d.ramped==0.0f && d.integral_a==0.0f && d.command_raw<0);
+    in.now_ms=3; in.speed=0.0f;
+    MotorDebug_Step(&d,&config,&in); assert(d.command_raw==0);
     in.now_ms=100;MotorDebug_Step(&d,&config,&in);assert(d.command_raw==0);
 }
 int main(void)
 {
     wheels();
     rc.switch_c=ROBOT_SWITCH_DOWN;rc.rocker_r_v=660;
+    mode_reply_mask&=~2U; /* ID2 只回位置。 */
+    modes[2]=5;           /* ID3 回报非定位模式，整机仍下发 P/T。 */
     assert(Servo_Init());operate(850);
     assert(positions[4]==1500 && moves==0);
     rc.rocker_r_v=0;operate(50); rc.rocker_r_v=330;operate(3500);
@@ -69,7 +80,24 @@ int main(void)
     assert(positions[0]>1500 && positions[3]<1500 && positions[1]==1500 && positions[2]==1500);
     rc.switch_c=ROBOT_SWITCH_MIDDLE;rc.rocker_l_v=-300;rc.rocker_l_h=300;operate(750);
     assert(positions[2]<1500 && positions[1]>1500 && positions[4]==2500 && !grip_stops);
+    assert(!state(2).mode_valid && state(3).mode_valid && state(3).mode==5);
+    /* 运动发送失败且停止无应答。同档等新位置再自动接管，从新位置继续。 */
+    rc.rocker_l_v=0; rc.rocker_l_h=0; operate(100);
+    uint16_t shoulder_before=positions[2];
+    fail_tx=true; rc.rocker_l_v=300; operate(500);
+    assert(!fail_tx && positions[2]>shoulder_before && Servo_RcInhibited()==0U);
+    fail_tx=true;
+    for(unsigned elapsed=0;fail_tx && elapsed<200U;++elapsed) operate(1);
+    assert(!fail_tx);
+    reply_mask&=~4U;
+    shoulder_before=positions[2];
+    operate(450);
+    assert(positions[2]==shoulder_before && !state(3).online && Servo_RcInhibited()==0U);
+    positions[2]=700;
+    reply_mask|=4U;
+    for(unsigned elapsed=0;positions[2]==700 && elapsed<1500U;++elapsed) operate(1);
+    assert(positions[2]>700 && positions[2]<720 && Servo_RcInhibited()==0U);
     assert(!depth);
-    puts("PASS: robot turn limits, four-wheel PI, wrist-only turn, mirrored gripper pickup/hold, zero deadband");
+    puts("PASS: robot chassis neutral, gripper pickup/hold, mode-independent servo motion and same-gear recovery");
     return 0;
 }

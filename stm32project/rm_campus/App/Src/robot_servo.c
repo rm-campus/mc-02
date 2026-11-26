@@ -31,7 +31,6 @@ bool RobotServo_CanTransmit(uint8_t id, uint32_t now)
 static bool usable(const ServoState *s, const ServoConfig *c, uint32_t now)
 {
     return s->position_seen && s->online && now - s->position_ms < SERVO_POSITION_STALE_MS &&
-           s->mode_valid && s->mode >= 1 && s->mode <= 4 &&
            s->position >= c->minimum && s->position <= c->maximum;
 }
 
@@ -69,7 +68,8 @@ void RobotServo_Process(uint32_t now)
         (void)Servo_ControlRelease(SERVO_OWNER_RC);
         return;
     }
-    if (Servo_RcStopPending() || !Servo_ControlClaim(SERVO_OWNER_RC,selected)) return;
+    if (!Servo_ControlClaim(SERVO_OWNER_RC,selected)) return;
+    const uint8_t stops_pending=Servo_RcStopPending();
     uint32_t elapsed=now-last_update;
     bool update=elapsed >= SERVO_RC_PERIOD_MS;
     if (update) last_update=now;
@@ -83,11 +83,13 @@ void RobotServo_Process(uint32_t now)
         ServoState s;
         if (!Servo_CopyState(id,&s) || !usable(&s,c,now) || (Servo_RcInhibited()&bit)) {
             if (initialized&bit) {
-                Servo_RcStopMask(bit); initialized&=(uint8_t)~bit;
+                if (!(stops_pending&bit)) Servo_RcStopMask(bit);
+                initialized&=(uint8_t)~bit;
                 if (id==5) { picked_up=false; have_previous_stick=false; }
             }
             continue;
         }
+        if (stops_pending) continue;
         float *target=&position[id-1];
         if (!(initialized&bit)) {
             *target=s.position;
@@ -95,7 +97,8 @@ void RobotServo_Process(uint32_t now)
             queued_position[id-1]=(uint16_t)*target;
             initialized |= bit;
         }
-        const float span=s.mode<=2 ? 270.0f : 180.0f;
+        /* 模式只用于步长换算。未读到 180° 位置模式时按 270° 换算。 */
+        const float span=s.mode_valid && (s.mode==3U || s.mode==4U) ? 180.0f : 270.0f;
         const float step=axes[id-1].speed*dt*(2000.0f/span);
         if (id==5) {
             if (!boot_p || ROBOT_GRIPPER_CLOSED_P<c->minimum || ROBOT_GRIPPER_CLOSED_P>c->maximum ||
@@ -103,7 +106,7 @@ void RobotServo_Process(uint32_t now)
             int stick=control.rc.rocker_r_v;
             if (!picked_up) {
                 float stroke=(float)ROBOT_GRIPPER_CLOSED_P-boot_p;
-                float held=(s.target>=c->minimum && s.target<=c->maximum)?s.target:boot_p;
+                const float held=*target;
                 float threshold=fminf(660.0f,fmaxf(0.0f,(held-boot_p)*660.0f/stroke));
                 picked_up=crosses(have_previous_stick?previous_stick:stick,stick,threshold);
                 previous_stick=stick; have_previous_stick=true;

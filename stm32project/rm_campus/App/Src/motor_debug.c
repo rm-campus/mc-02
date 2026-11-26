@@ -15,6 +15,7 @@ MotorDebugConfig MotorDebug_DefaultConfig(void)
         .enabled = MOTOR_DEBUG_ENABLE != 0, .motor_id = MOTOR_DEBUG_MOTOR_ID,
         .kp = MOTOR_DEBUG_KP, .ki = MOTOR_DEBUG_KI,
         .max_speed = MOTOR_DEBUG_MAX_SPEED,
+        .accel = MOTOR_DEBUG_ACCEL, .ramp_weight = MOTOR_DEBUG_RAMP_WEIGHT,
         .current_limit = MOTOR_DEBUG_CURRENT_LIMIT, .integral_limit = MOTOR_DEBUG_INTEGRAL_LIMIT,
         .overspeed = MOTOR_DEBUG_OVERSPEED, .deadband = MOTOR_DEBUG_STICK_DEADBAND,
         .max_temperature = MOTOR_DEBUG_MAX_TEMPERATURE,
@@ -68,6 +69,8 @@ static bool config_valid(const MotorDebugConfig *c)
         isfinite(c->kp) && c->kp >= 0.0f && c->kp <= 100.0f &&
         isfinite(c->ki) && c->ki >= 0.0f && c->ki <= 100.0f &&
         isfinite(c->max_speed) && c->max_speed > 0.0f && c->max_speed <= MOTOR_DEBUG_RPM_TO_RAD_S(450.0f) &&
+        isfinite(c->accel) && c->accel > 0.0f && c->accel <= MOTOR_DEBUG_RPM_TO_RAD_S(600.0f) &&
+        isfinite(c->ramp_weight) && c->ramp_weight >= 0.0f && c->ramp_weight <= 1.0f &&
         isfinite(c->current_limit) && c->current_limit > 0.0f && c->current_limit <= 20.0f &&
         isfinite(c->integral_limit) && c->integral_limit >= 0.0f &&
         c->integral_limit <= c->current_limit &&
@@ -152,16 +155,26 @@ void MotorDebug_Step(MotorDebug *d, const MotorDebugConfig *c, const MotorDebugI
 #endif
     d->target = in->target_rad_s;
     const float dt = (float)in->period_ms * 0.001f;
-    d->reference = d->target; /* 目标直接进入速度环；运行中回中时，PI 仍可输出制动电流。 */
+    const bool drive_neutral = ROBOT_CONTROL_ENABLE && in->robot_drive_neutral;
+    if (drive_neutral) {
+        /* 所有底盘轴回中后立即撤掉旧给定，清积分，只保留与实际轮速反向的制动。 */
+        d->ramped = 0.0f;
+        d->integral_a = 0.0f;
+    }
+    /* 给定斜坡：ramped 以 accel 限幅逼近目标，再按权重掺回参考后进入速度环。
+     * 权重 0 时 reference 恒等于 target（无斜坡）；权重 1 时是完整的速率限幅。
+     * 默认小权重只压掉摇杆阶跃的初始冲击，不改变稳态，也不会让回中制动失效。 */
+    d->ramped += clampf(d->target - d->ramped, -c->accel * dt, c->accel * dt);
+    d->reference = d->target + c->ramp_weight * (d->ramped - d->target);
     const float error = d->reference - in->speed;
     const float proportional = c->kp * error;
     const float candidate = clampf(d->integral_a + c->ki * error * dt,
                                    -c->integral_limit, c->integral_limit);
     const float sum = proportional + candidate;
     /* 条件积分：饱和时阻止积分继续朝饱和方向增大，允许反向释放。 */
-    if ((sum <= c->current_limit && sum >= -c->current_limit) ||
+    if (!drive_neutral && ((sum <= c->current_limit && sum >= -c->current_limit) ||
         (sum > c->current_limit && error < 0.0f) ||
-        (sum < -c->current_limit && error > 0.0f)) d->integral_a = candidate;
+        (sum < -c->current_limit && error > 0.0f))) d->integral_a = candidate;
     d->output_a = clampf(proportional + d->integral_a, -c->current_limit, c->current_limit);
     d->command_raw = (int16_t)(d->output_a * (16384.0f / 20.0f));
 }

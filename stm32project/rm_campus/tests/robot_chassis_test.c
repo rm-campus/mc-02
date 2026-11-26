@@ -16,7 +16,8 @@ static void frames(void)
 {
     Fxi6x_Data rc={.valid=true,.received=true,.last_valid_ms=now,.frame_count=now+1,
         .switch_a=1,.switch_c=now<100?ROBOT_SWITCH_UP:now<200?ROBOT_SWITCH_MIDDLE:ROBOT_SWITCH_DOWN,
-        .rocker_l_v=1,.rocker_l_h=0,.rocker_r_h=now<200?0:15};
+        .rocker_l_v=(now>=70 && now<90) ? 330 : ROBOT_CHASSIS_DEADBAND,
+        .rocker_l_h=0,.rocker_r_h=now<200?0:ROBOT_CHASSIS_DEADBAND+15};
     if(now<=300 && now%10U==0) Fxi6x_OnFrame(&rc);
 }
 
@@ -26,7 +27,7 @@ bool Can_Send(uint32_t id,const uint8_t *bytes,uint8_t size)
     ++tx_count;
     for(unsigned i=0;i<4;++i) {
         int16_t current=(int16_t)((uint16_t)bytes[i*2]<<8|bytes[i*2+1]);
-        if(now>=60 && now<100) assert((i%2==0)?current>0:current<0);
+        if(now>=70 && now<90) assert((i%2==0)?current>0:current<0);
         else if(now>=230 && now<400) assert(current>0);
         else assert(current==0);
     }

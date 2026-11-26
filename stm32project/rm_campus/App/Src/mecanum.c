@@ -48,10 +48,11 @@ void Mecanum_RobotTargets(const RobotControlState *s, float max_speed, float tar
             ratio=yaw*(3.14159265f/180.0f)*(ROBOT_WHEELBASE_M+ROBOT_TRACK_M)/
                   (2.0f*ROBOT_WHEEL_RADIUS_M*max_speed);
         }
-        turn=MECANUM_TURN_SIGN*s->rc.rocker_r_h*(1.0f/660.0f)*fminf(1.0f,fmaxf(0.0f,ratio));
+        turn=MECANUM_TURN_SIGN*stick_fraction(s->rc.rocker_r_h, ROBOT_CHASSIS_DEADBAND)*
+             fminf(1.0f,fmaxf(0.0f,ratio));
         if (upper) {
-            forward=MECANUM_FORWARD_SIGN*s->rc.rocker_l_v*(1.0f/660.0f);
-            right=MECANUM_RIGHT_SIGN*s->rc.rocker_l_h*(1.0f/660.0f);
+            forward=MECANUM_FORWARD_SIGN*stick_fraction(s->rc.rocker_l_v, ROBOT_CHASSIS_DEADBAND);
+            right=MECANUM_RIGHT_SIGN*stick_fraction(s->rc.rocker_l_h, ROBOT_CHASSIS_DEADBAND);
         }
     }
     mix(forward,right,turn,max_speed,targets);

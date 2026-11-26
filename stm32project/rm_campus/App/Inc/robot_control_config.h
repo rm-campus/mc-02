@@ -32,6 +32,14 @@
 #define ROBOT_LINK_TIMEOUT_MS 100U
 #define ROBOT_SWITCH_STABLE_MS 30U
 
+/* 整机底盘的摇杆中位容差，取值与 SBUS 摇杆同为 -660～660。 */
+#ifndef ROBOT_CHASSIS_DEADBAND
+#define ROBOT_CHASSIS_DEADBAND 60
+#endif
+#if ROBOT_CHASSIS_DEADBAND < 0 || ROBOT_CHASSIS_DEADBAND >= 660
+#error "Robot chassis deadband must be in 0..659"
+#endif
+
 /* 轮端 rpm、车体角速度 °/s。上下档各自可调。尺寸单位 m，轮心到轮心的全距。 */
 #ifndef ROBOT_CHASSIS_MAX_WHEEL_RPM
 #define ROBOT_CHASSIS_MAX_WHEEL_RPM 400.0f

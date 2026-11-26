@@ -83,6 +83,13 @@
 #endif
 #define MOTOR_DEBUG_RPM_TO_RAD_S(rpm) ((rpm) * (6.283185307179586f / 60.0f))
 #define MOTOR_DEBUG_MAX_SPEED MOTOR_DEBUG_RPM_TO_RAD_S(400.0f)
+/* 给定斜坡：内部值以该加速度上限逼近目标，再按 MOTOR_DEBUG_RAMP_WEIGHT 掺回参考。
+ * 原始实现只有限幅（等效权重 1）；这里默认取小权重，只削弱摇杆阶跃造成的冲击，
+ * 不整体拖慢跟随。权重 0 即完全关闭斜坡，回到直接使用目标。 */
+#define MOTOR_DEBUG_ACCEL MOTOR_DEBUG_RPM_TO_RAD_S(300.0f)
+#ifndef MOTOR_DEBUG_RAMP_WEIGHT
+#define MOTOR_DEBUG_RAMP_WEIGHT 0.35f
+#endif
 #define MOTOR_DEBUG_CURRENT_LIMIT 9.5f
 #define MOTOR_DEBUG_INTEGRAL_LIMIT 1.50f
 #ifndef MOTOR_DEBUG_TELEMETRY

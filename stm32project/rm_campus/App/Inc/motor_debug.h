@@ -26,6 +26,8 @@ typedef struct {
     bool enabled;
     uint8_t motor_id;
     float kp, ki, max_speed, current_limit, integral_limit;
+    float accel;       /* rad/s²：给定斜坡的速率上限。 */
+    float ramp_weight; /* 0～1：斜坡对参考的权重，0 为直接使用目标。 */
     float overspeed;
     int16_t deadband;
     uint8_t max_temperature;
@@ -36,6 +38,7 @@ typedef struct {
     uint32_t now_ms, period_ms;
     bool rc_valid, rc_received, motor_received, can_ok;
     bool robot_drive_enabled; /* 整机模式由当前档位及总线恢复状态决定。 */
+    bool robot_drive_neutral; /* 整机模式当前档位所用的底盘摇杆轴都在死区内。 */
     uint32_t rc_ms, feedback_ms;
     int8_t enable_switch; /* +1 关闭，0 中档，-1 启用。 */
     int16_t stick;        /* -660～660。 */
@@ -50,6 +53,7 @@ typedef struct {
     MotorDebugState state;
     MotorDebugReason reason;
     float target, reference, integral_a, output_a;
+    float ramped; /* 斜坡内部值：按 accel 限幅逼近 target，不直接进入速度环。 */
     int16_t command_raw; /* 本轮计算出的 C620 指令，16384 对应 20 A；由底盘任务统一发送。 */
     uint32_t center_ms;
     bool off_seen, centering;

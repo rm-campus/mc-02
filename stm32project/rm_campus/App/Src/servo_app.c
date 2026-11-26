@@ -343,6 +343,10 @@ static void arm_failure(unsigned failed_slot)
     control_stops[SERVO_OWNER_ARM]|=control_claimed&
         (uint8_t)~(control_manual_hold[SERVO_OWNER_ARM]|control_stop_failed[SERVO_OWNER_ARM]);
 }
+static bool position_mode_required(ServoControlOwner owner)
+{
+    return !ROBOT_CONTROL_ENABLE || owner != SERVO_OWNER_RC;
+}
 static ServoResult validate_motion(ServoControlOwner owner,unsigned slot,uint16_t p,uint16_t ms,uint32_t now)
 {
     if(motion_requires_reset() || mode_work.ticket)return SERVO_BUSY;
@@ -355,7 +359,7 @@ static ServoResult validate_motion(ServoControlOwner owner,unsigned slot,uint16_
         (owner==SERVO_OWNER_ARM && control_inhibited[owner]))return SERVO_BUSY;
     const ServoState *s=&published.device[slot];
     if(!s->online || (uint32_t)(now-s->position_ms)>=SERVO_POSITION_STALE_MS)return SERVO_OFFLINE;
-    if(!s->mode_valid || s->mode<1U || s->mode>4U)return SERVO_BAD_MODE;
+    if(position_mode_required(owner) && (!s->mode_valid || s->mode<1U || s->mode>4U))return SERVO_BAD_MODE;
     return SERVO_QUEUED;
 }
 static int replace_index(unsigned slot,ServoControlOwner owner)
@@ -565,18 +569,27 @@ static void finish_mode(ServoResult result, uint32_t now, const ZpReply *reply)
 static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
 {
     ServoState *s=&work.device[current.slot];
+    const bool robot_rc = ROBOT_CONTROL_ENABLE && current.owner == SERVO_OWNER_RC;
     if(current.ticket) { s->last_ticket=current.ticket; s->last_result=result; }
     if(owner_valid(current.owner) && (result!=SERVO_OK || current.op==ZP_STOP)) {
         taskENTER_CRITICAL();
         if(current.op==ZP_STOP)control_stops[current.owner]&=(uint8_t)~(1U<<current.slot);
         if(result!=SERVO_OK) {
-            control_inhibited[current.owner]|=(uint8_t)(1U<<current.slot);
-            if(current.op==ZP_STOP)control_stop_failed[current.owner]|=(uint8_t)(1U<<current.slot);
+            if(!robot_rc) {
+                control_inhibited[current.owner]|=(uint8_t)(1U<<current.slot);
+                if(current.op==ZP_STOP)control_stop_failed[current.owner]|=(uint8_t)(1U<<current.slot);
+            }
             cancel_moves(current.slot);
             if(current.owner==SERVO_OWNER_RC && current.op==ZP_MOVE)
                 control_stops[current.owner]|=(uint8_t)(1U<<current.slot);
         }
         taskEXIT_CRITICAL();
+        if(robot_rc && result!=SERVO_OK) {
+            /* 同档恢复从故障后读到的位置开始，丢弃旧的运动目标。 */
+            s->online=false;
+            s->target=0;
+            next_poll[current.slot]=now;
+        }
     }
     /* 可选后台查询缺应答只计超时；真正的通信错误和位置故障仍走原控制保护。 */
     bool missing_metadata=metadata_retry_current && phase==REPLY && result==SERVO_TIMEOUT;
@@ -832,7 +845,8 @@ void Servo_Process(uint32_t now)
                  ((control_inhibited[current.owner]|control_stops[current.owner])&(1U<<current.slot)) ||
                  (current.owner==SERVO_OWNER_ARM && control_inhibited[current.owner])))finish(SERVO_BUSY,now,NULL);
             else if(motion && (!s->online || (uint32_t)(now-s->position_ms)>=SERVO_POSITION_STALE_MS))finish(SERVO_OFFLINE,now,NULL);
-            else if(current.op==ZP_MOVE && (!s->mode_valid || s->mode<1U || s->mode>4U))finish(SERVO_BAD_MODE,now,NULL);
+            else if(current.op==ZP_MOVE && position_mode_required(current.owner) &&
+                    (!s->mode_valid || s->mode<1U || s->mode>4U))finish(SERVO_BAD_MODE,now,NULL);
 #if SERVO_JOG_TEST_ENABLE
             else if(current.op==ZP_MOVE && s->mode!=jog.mode)finish(SERVO_BAD_MODE,now,NULL);
 #endif
