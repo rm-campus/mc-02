@@ -34,13 +34,18 @@ static void wheels(void)
     s.mode=ROBOT_WRIST; s.rc.rocker_l_v=660; s.rc.rocker_l_h=660;
     Mecanum_RobotTargets(&s,cap,v);
     assert(fabsf(v[0]-lower)<0.001f && v[1]==-v[0] && v[2]==v[0] && v[3]==-v[0]);
-    s.rc.rocker_r_h=-1;
+    s.rc.rocker_r_h=-MECANUM_TURN_DEADBAND;
+    Mecanum_RobotTargets(&s,cap,v); assert(v[0]==0 && v[1]==0 && v[2]==0 && v[3]==0);
+    const float turn_span=660.0f-MECANUM_TURN_DEADBAND;
+    s.rc.rocker_r_h=-MECANUM_TURN_DEADBAND-1;
     Mecanum_RobotTargets(&s,cap,v);
-    assert(fabsf(v[0]+lower/660.0f)<0.001f && v[0]<0 && v[1]==-v[0]);
-    s.mode=ROBOT_DRIVE; s.rc.rocker_l_h=-1; s.rc.rocker_r_h=1;
+    assert(fabsf(v[0]+lower/turn_span)<0.001f && v[0]<0 && v[1]==-v[0]);
+    s.mode=ROBOT_DRIVE; s.rc.rocker_l_h=-1; s.rc.rocker_r_h=MECANUM_TURN_DEADBAND;
     s.rc.rocker_l_v=ROBOT_CHASSIS_DEADBAND;
+    Mecanum_RobotTargets(&s,cap,v); assert(v[0]==0 && v[1]==0 && v[2]==0 && v[3]==0);
+    s.rc.rocker_r_h=MECANUM_TURN_DEADBAND+1;
     Mecanum_RobotTargets(&s,cap,v);
-    assert(fabsf(v[0]-upper/660.0f)<0.001f && v[0]>0 && v[1]==-v[0]);
+    assert(fabsf(v[0]-upper/turn_span)<0.001f && v[0]>0 && v[1]==-v[0]);
     s.rc.rocker_r_h=0;
     Mecanum_RobotTargets(&s,cap,v); assert(v[0]==0 && v[1]==0 && v[2]==0 && v[3]==0);
     s.rc.rocker_l_v=ROBOT_CHASSIS_DEADBAND+1;
@@ -59,8 +64,49 @@ static void wheels(void)
     MotorDebug_Step(&d,&config,&in); assert(d.command_raw==0);
     in.now_ms=100;MotorDebug_Step(&d,&config,&in);assert(d.command_raw==0);
 }
-int main(void)
+#if SERVO_FASHIONSTAR_GRIPPER
+static void fashionstar_gripper(void)
 {
+    assert(FsServo_PulseFromAngle(-216)==1380U && FsServo_AngleFromPulse(1380)==-216);
+    positions[4]=1380;
+    reply_mask=4U|16U;
+    fs_misses_after_zp=11;
+    rc.switch_c=ROBOT_SWITCH_DOWN;
+    rc.rocker_r_v=660;
+    assert(Servo_Init());
+    operate(1600);
+    assert(state(5).online && state(5).id_seen);
+    assert(state(5).position==1380 && fs_queries>0 && fs_moves==0);
+    rc.rocker_r_v=0; operate(150);
+    rc.rocker_r_v=330; operate(600);
+    assert(positions[4]==1408 && state(5).target==1408 && fs_moves>0);
+    rc.rocker_r_v=660; operate(700);
+    assert(positions[4]==1436 && state(5).position==1436 && state(5).target==1436);
+    rc.switch_c=ROBOT_SWITCH_UP; operate(300);
+    assert(positions[4]==1436 && fs_holds==0);
+    assert(state(3).online && positions[2]==1500);
+    rc.switch_c=ROBOT_SWITCH_DOWN; operate(150);
+    rc.rocker_r_v=0; operate(700);
+    assert(positions[4]==1380 && state(5).position==1380 && state(5).target==1380);
+    assert(positions[2]==1500 && !depth);
+    run(420);
+    assert(fs_holds==1U);
+    puts("PASS: U25-M ID005 on mixed UART7, CH3 pickup/half/full/open, retained grip on gear change, shoulder feedback and link-loss hold");
+}
+#endif
+
+int main(int argc,char **argv)
+{
+#if !SERVO_FASHIONSTAR_GRIPPER
+    (void)argc;
+    (void)argv;
+#endif
+#if SERVO_FASHIONSTAR_GRIPPER
+    if (argc==2 && !strcmp(argv[1],"fashionstar")) {
+        fashionstar_gripper();
+        return 0;
+    }
+#endif
     wheels();
     rc.switch_c=ROBOT_SWITCH_DOWN;rc.rocker_r_v=660;
     mode_reply_mask&=~2U; /* ID2 只回位置。 */

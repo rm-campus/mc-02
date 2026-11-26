@@ -15,6 +15,13 @@
 #define MECANUM_FORWARD_SIGN   1 /* 推前时若 CH2 为负，填 -1。 */
 #define MECANUM_RIGHT_SIGN     1 /* 推右时若 CH4 为负，填 -1。 */
 #define MECANUM_TURN_SIGN      1 /* 右摇杆向右为顺时针；若右推 CH1 为负，填 -1。 */
+/* CH1 自转单独处理回中偏差，取值单位与 -660～660 的 SBUS 摇杆相同。 */
+#ifndef MECANUM_TURN_DEADBAND
+#define MECANUM_TURN_DEADBAND 60
+#endif
+#if MECANUM_TURN_DEADBAND < 0 || MECANUM_TURN_DEADBAND >= 660
+#error "Mecanum turn deadband must be in 0..659"
+#endif
 #define MOTOR_REVERSED_MASK    0x0AU /* bit1、bit3：反转 ID2、ID4 的电流指令和反馈方向。 */
 #ifndef MOTOR_DEBUG_MODE
 #define MOTOR_DEBUG_MODE MOTOR_DEBUG_MODE_FOUR
@@ -100,7 +107,7 @@
 #endif
 #define MOTOR_DEBUG_TELEMETRY_PERIOD_MS 5U
 /* CH7 最左拨杆：+1 关闭确认，-1 启用。CH2 左摇杆竖直。 */
-#define MOTOR_DEBUG_STICK_DEADBAND 60 /* 三轴启用前回中；麦轮运行时仅 CH2/CH4 过死区。 */
+#define MOTOR_DEBUG_STICK_DEADBAND 60 /* 三轴启用前回中；麦轮运行时用于 CH2/CH4 平移。 */
 #define MOTOR_DEBUG_ARM_HOLD_MS 300U
 #define MOTOR_DEBUG_RC_TIMEOUT_MS 100U
 #define MOTOR_DEBUG_FEEDBACK_TIMEOUT_MS 100U

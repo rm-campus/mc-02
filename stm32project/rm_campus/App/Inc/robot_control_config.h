@@ -13,6 +13,12 @@
 #ifndef ROBOT_CONTROL_ENABLE
 #define ROBOT_CONTROL_ENABLE 0
 #endif
+#ifndef ROBOT_SERVO_TELEMETRY_ENABLE
+#define ROBOT_SERVO_TELEMETRY_ENABLE 0
+#endif
+#if ROBOT_SERVO_TELEMETRY_ENABLE && !ROBOT_CONTROL_ENABLE
+#error "Robot servo telemetry requires robot control"
+#endif
 #if SERVO_STATUS_ONLY && (ROBOT_CONTROL_ENABLE || defined(SERVO_ID_SETUP))
 #error "Servo status monitor is exclusive with robot control and ID setup"
 #endif
@@ -32,7 +38,10 @@
 #define ROBOT_LINK_TIMEOUT_MS 100U
 #define ROBOT_SWITCH_STABLE_MS 30U
 
-/* 整机底盘仅在 CH2/CH4 平移输入应用死区。CH1 自转从零线性映射。 */
+/* 仅用于推杆时延后后台轮询，不改变关节的摇杆死区。 */
+#define ROBOT_SERVO_DEFER_POLL_STICK 20
+
+/* 整机底盘 CH2/CH4 平移死区，CH1 自转死区在 motor_debug_config.h 单独设置。 */
 #ifndef ROBOT_CHASSIS_DEADBAND
 #define ROBOT_CHASSIS_DEADBAND 60
 #endif

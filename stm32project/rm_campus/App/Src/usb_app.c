@@ -6,6 +6,8 @@
 #include "servo_usb.h"
 #include "servo_rc_usb.h"
 #include "arm_usb.h"
+#include "robot_control_config.h"
+#include "robot_servo_usb.h"
 
 #define USB_APP_RX_CHUNK 256U
 
@@ -18,6 +20,12 @@ void Campus_UsbOnReceive(const uint8_t *data, uint16_t length)
 void Campus_UsbProcess(void)
 {
     UsbSerial_Process();
+#if ROBOT_SERVO_TELEMETRY_ENABLE
+    /* 整机回传只发送监测数据，不分派 USB 控制指令。 */
+    uint8_t discarded[USB_APP_RX_CHUNK];
+    (void)UsbSerial_Read(discarded, sizeof(discarded));
+    RobotServoUsb_Process();
+#else
     UsbSerialStatus usb;
     UsbSerial_GetStatus(&usb);
     FlashTasks_UsbSession(usb.session_id, usb.ready);
@@ -35,6 +43,7 @@ void Campus_UsbProcess(void)
     ArmUsb_Process();
     ServoRcUsb_Process();
     MotorDebugUsb_Process();
+#endif
 #endif
     UsbSerial_Process();
 }

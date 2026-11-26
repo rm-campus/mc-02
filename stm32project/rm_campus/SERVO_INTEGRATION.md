@@ -17,6 +17,37 @@ UART7 单线半双工，115200、8N1、无流控；启用 TX/RX Swap，使用 PE
 
 重新生成 Core 代码后要检查 UART7 同时保留 HAL_HalfDuplex_Init(&huart7)、TX/RX Swap 和 PE7 的 AF7 开漏与内部上拉配置。
 
+## U25-M 与肩舵机共线检测
+
+`ServoMixedProbe` 预设只运行 USB 维护任务，独占 UART7。配置并构建后，烧录
+`build/ServoMixedProbe/rm_campus_servo_mixed_probe.elf`。开串口助手，选择 MC02 的 USB 虚拟串口，
+用 115200、8N1、ASCII 和 LF/CRLF，发送一次 `mixed_servo_probe`。华馨京默认地址按 0 查询；
+如果已经改过地址，在命令后加实际地址，如 `mixed_servo_probe 5`。众灵侧固定查询肩关节 003。
+
+报告用 `MIXED_SERVO BEGIN` 和 `MIXED_SERVO END` 分隔。`ZP` 行报告 ID、位置 P 值和模式；
+`FS` 行报告通信检测、单圈位置（`angle_ddeg` 每单位为 0.1°）、电压/电流/功率、温度 ADC 和保护状态位。
+`rx` 保留每次查询最多 24 字节的十六进制回包。两类回包通过各自的格式、地址和校验检查；
+`NO_REPLY` 表示未收到字节，`INVALID_REPLY` 表示收到字节但未找到匹配回包。
+
+UART7 固定 115200/8N1。先确认两台的有效电压交集、线序和信号电平。U25-M 要求 6.0～8.4 V，
+舵机正极接外部舵机电源，GND 与 MC02 P13-2 共地，S 线接 P13-3。每次只保留一个发送主站。
+如果用华馨京上位机调整 ID 或波特率，先把 U25-M 单独接到厂家转接板；上位机做单轴点动时选**单圈角度控制**。
+此预设只在收到 USB 探测命令后读取状态，日常遥控使用 `RobotControl` 或本机的 `RobotControlTelemetry`。
+
+## 用 U25-M 替换夹爪 005
+
+`RobotControlFashionStar` 沿用整机遥控和 USB 波形预设。设 U25-M 的总线地址为 005，和肩舵机
+003 共用 115200/8N1 的 UART7。CH9 下档时，CH3（右杆上下）控制夹爪。摇杆回中对应开合起点，
+上下任一方向越接近满杆，夹爪就越接近合拢端。上电后先让摇杆回中以接管。
+
+默认台架配置 `FS_GRIPPER_BENCH_ISOLATION=1`。待机和下档只轮询 U25-M，下档只控制 005；中档可查肩轴。
+这台 U25-M 实测在众灵帧之后会连续漏回多条查询；正常整机混扫仍需要进一步验证。
+
+U25-M 用第一次有效位置作为起点，`FS_GRIPPER_TRAVEL_DDEG` 默认是 +100（+10°），用于单轴空载验证；
+装夹爪后按实测调整关闭方向和行程。USB 第五路仍是「005 夹爪」且保留实测、发送目标和速度字段。
+这一轴把 −180°～+180° 映射到 P500～P2500，因此 1 P 约为 0.18°，速度用相同的映射比例换算。
+启动示波器可用 `python tools/servo_scope.py --port COM5 --joint 5`，串口号按现场枚举选择。
+
 ## 单舵机读号与改号
 
 `ServoId` 只启动 USB 改号任务，独占 UART7。断电换线，单次只接一台舵机。

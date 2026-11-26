@@ -84,7 +84,7 @@ void Fxi6x_CopyData(Fxi6x_Data *rc)
         rc->rocker_r_h = now<350 ? 61 : 0;
         if (now>=700) rc->rocker_r_h = 360;
         if (now>=710) rc->rocker_r_h = -360;
-        if (now>=720) rc->rocker_r_h = -60;
+        if (now>=720) rc->rocker_r_h = -MECANUM_TURN_DEADBAND;
         if (now>=730) {
             rc->rocker_l_v = 660;
             rc->rocker_l_h = -660;
@@ -106,9 +106,9 @@ void vTaskDelayUntil(TickType_t *wake,TickType_t delta)
             assert(d.running_mask==15);
             for (unsigned i=0;i<4;++i) {
                 const float turn_sign = (i==0 || i==2) ? 1.0f : -1.0f;
-                float expected = turn_sign * (360.0f / 660.0f);
+                float expected = turn_sign * (360.0f-MECANUM_TURN_DEADBAND) / (660.0f-MECANUM_TURN_DEADBAND);
                 if (now>710) expected = -expected;
-                if (now>720) expected = -turn_sign * (60.0f / 660.0f);
+                if (now>720) expected = 0;
                 if (now>730) expected = mixed[i];
                 if (now>740) expected = 0.5f;
                 assert(fabsf(d.wheel[i].control.target - expected*MOTOR_DEBUG_MAX_SPEED)<0.001f);

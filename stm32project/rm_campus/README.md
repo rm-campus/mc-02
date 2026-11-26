@@ -34,6 +34,16 @@ ASCII 栏便于读指令；时间戳取自 MCU 接收中断。掉线或背压导
 [ROBOT_CONTROL_ENABLE](App/Inc/robot_control_config.h)。`ServoId` 预设单独用于读号、改号。
 整机仅运行遥控、底盘、舵机总线、监测和状态任务，独占四轮和五舵机。USB 调试、Flash 日志及速度 IK 属于其他固件配置。
 
+需要边遥控边看舵机曲线时，使用 `RobotControlTelemetry` 构建预设，产物为
+`build/RobotControlTelemetry/rm_campus_robot_telemetry.elf`。它在同一套整机控制上增加只读 USB 回传，
+数据取自现有 UART7 反馈。烧录后用 MC02 的 USB 数据口连接电脑，运行 `python tools/servo_scope.py`
+（需 pyserial 和 Tkinter），选择板子的 USB 串口以及舵机 ID。也可在 VOFA+ 选择 FireWater。
+波形字段见 [USB 舵机波形](COMMUNICATION_PROTOCOL.md)。
+
+U25-M 替换夹爪 005 时选择 `RobotControlFashionStar` 预设，产物为
+`build/RobotControlFashionStar/rm_campus_robot_fs_gripper.elf`。此版保留 CH3 与 USB 005 通道，
+默认下档只测试新夹爪。共线、限位与空载步骤见 [U25-M 接入说明](SERVO_INTEGRATION.md)。
+
 | CH9 实体档位（默认读数） | CH2 左竖直 | CH4 左水平 | CH1 右水平 | CH3 右竖直 | LED |
 |---|---|---|---|---|---|
 | 上（+1） | 前后移动 | 横向移动 | 车身转向，可与平移叠加 | 空闲 | 绿 |
@@ -43,7 +53,7 @@ ASCII 栏便于读指令；时间戳取自 MCU 接收中断。掉线或背压导
 启动按真实 SBUS 新帧计数，至少 3 帧且首末相隔 50 ms。CH7/CH8 及回中操作不参与使能。
 切档立即撤销旧对象的运动，新档连续稳定 30 ms 后接管。遥控发生失控、丢帧或距有效帧达到
 100 ms 时撤销运动。等待/失联显示红色；每次链路就绪时，PB15/TIM12_CH2 的板载蜂鸣器短鸣约 100 ms。
-底盘 CH2/CH4 平移保留 ±60 死区，CH1 自转从 0 线性映射。CH1 中位偏差会产生小幅转向给定。
+底盘 CH2/CH4 平移和 CH1 自转默认各有 ±60 死区。CH1 可通过 `MECANUM_TURN_DEADBAND` 独立调整。
 全部底盘轴回中时，轮速参考和积分立即清零，保留零速比例制动。
 底盘仍有给定斜坡，作用于推杆和非零目标之间的变化。舵机关节沿用直接的摇杆映射。
 
@@ -75,7 +85,7 @@ ID3 肩关节的软件限位为 P834～P2166，在 270° 位置模式下对应 P
 下面是关闭 `SERVO_STATUS_ONLY` 后的台架配置。需要时使用
 `cmake --preset Debug -DSERVO_STATUS_ONLY=OFF` 再构建；重新执行 `cmake --preset Debug` 即选回 USB 舵机监测预设。
 
-**默认四轮模式，CH8（左起第二个拨杆）在运行中选择目标。+1 或 0 为 CH2 四轮同速，−1 为麦轮控制。左杆控制前后（CH2）和横移（CH4），右杆水平（CH1）控制旋转，右推对应俯视顺时针。CH2/CH4 保留 ±60 死区，CH1 自转无死区，可边走边转，合成后每轮最高 400 rpm。
+**默认四轮模式，CH8（左起第二个拨杆）在运行中选择目标。+1 或 0 为 CH2 四轮同速，−1 为麦轮控制。左杆控制前后（CH2）和横移（CH4），右杆水平（CH1）控制旋转，右推对应俯视顺时针。CH2/CH4 平移和 CH1 自转各有 ±60 死区，可边走边转，合成后每轮最高 400 rpm。
 最左拨杆先 +1 确认关闭，再 -1 启用，各电机独立检查回中 300 ms 与基本静止；健康电机不等待缺失电机。**
 四轮模式以 200 Hz 发 CSV。同速 9 列，麦轮模式 12 列（ID1～4 目标 rpm、实测 rpm、反馈电流 A，各四列）。
 单电机模式保留 ready，随后 200 Hz 纯 CSV 四通道：目标 rpm、实测 rpm、指令 A、反馈 A。

@@ -12,7 +12,7 @@ parser.add_argument("--cc", default=shutil.which("gcc") or r"E:\CLion\CLion 2026
 args = parser.parse_args()
 sources = ["tests/robot_motion_test.c", "App/Src/robot_control.c", "App/Src/robot_servo.c",
            "App/Src/motor_debug.c", "App/Src/mecanum.c", "App/Src/servo_app.c",
-           "Bsp/Src/servo_uart.c", "Bsp/Src/zp_servo.c", "App/Src/usb_app.c",
+           "Bsp/Src/servo_uart.c", "Bsp/Src/zp_servo.c", "Bsp/Src/fs_servo.c", "App/Src/usb_app.c",
            "App/Src/flash_tasks.c", "App/Src/motor_debug_usb.c"]
 with tempfile.TemporaryDirectory() as d:
     directory = Path(d)
@@ -26,3 +26,8 @@ with tempfile.TemporaryDirectory() as d:
                         "-DROBOT_CONTROL_ENABLE=1", *geometry, "-I", str(directory), "-I", "App/Inc",
                         "-I", "Bsp/Inc", *sources, "-lm", "-o", str(exe)], check=True,cwd=root)
         subprocess.run([str(exe)], check=True)
+    subprocess.run([args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-DROBOT_CONTROL_ENABLE=1", "-DSERVO_FASHIONSTAR_GRIPPER=1",
+                    "-I", str(directory), "-I", "App/Inc", "-I", "Bsp/Inc",
+                    *sources, "-lm", "-o", str(exe)], check=True, cwd=root)
+    subprocess.run([str(exe), "fashionstar"], check=True)

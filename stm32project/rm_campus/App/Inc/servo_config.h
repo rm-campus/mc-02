@@ -56,6 +56,27 @@
 #define SERVO_RC_AXIS_TABLE \
     {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}
 #define SERVO_COUNT 5U
+#ifndef SERVO_FASHIONSTAR_GRIPPER
+#define SERVO_FASHIONSTAR_GRIPPER 0
+#endif
+#if SERVO_FASHIONSTAR_GRIPPER && !ROBOT_CONTROL_ENABLE
+#error "Fashion Star gripper requires robot control"
+#endif
+#if SERVO_FASHIONSTAR_GRIPPER
+#define SERVO_GRIPPER_MODEL "U25-M"
+/* 当前共线台架：测试夹爪时暂停众灵轮询，避免另一协议反复打断二进制接收。 */
+#ifndef FS_GRIPPER_BENCH_ISOLATION
+#define FS_GRIPPER_BENCH_ISOLATION 1
+#endif
+/* 空载试验先使用 10° 合拢行程和 2.5 W 指令。机构装好后按实测标定方向及行程。 */
+#ifndef FS_GRIPPER_TRAVEL_DDEG
+#define FS_GRIPPER_TRAVEL_DDEG 100
+#endif
+#define FS_GRIPPER_POWER_MW 2500U
+#else
+#define SERVO_GRIPPER_MODEL "ZP25S"
+#define FS_GRIPPER_BENCH_ISOLATION 0
+#endif
 /* 先逐台配置 ID，再并联。这里只描述设备，不向舵机写 ID/波特率/模式/PID。
  * ID3 肩关节以 P1500 为中心。270° 位置模式下向内取整，90° 对应 666 P。 */
 #define SERVO_DEVICE_TABLE \
@@ -63,7 +84,7 @@
     {2U, "ZP35", 500U, 2500U}, \
     {3U, "ZP45", 834U, 2166U}, \
     {4U, "ZP25S", 500U, 2500U}, \
-    {5U, "ZP25S", 500U, 2500U}
+    {5U, SERVO_GRIPPER_MODEL, 500U, 2500U}
 /* 500～2500 是协议范围，装配后仍需按实测机械行程逐轴标定。 */
 #define SERVO_QUEUE_SIZE 16U
 #define SERVO_RX_RING_SIZE 256U
@@ -76,7 +97,7 @@
 #define SERVO_METADATA_RETRY_MS 1000U /* UART7 全总线的后台模式/版本补读间隔。 */
 #define SERVO_OFFLINE_RETRY_MS 1000U
 #define SERVO_FAIL_LIMIT 3U
-#define SERVO_POSITION_STALE_MS 200U
+#define SERVO_POSITION_STALE_MS (SERVO_FASHIONSTAR_GRIPPER ? 350U : 200U)
 #define SERVO_MOVE_INTERVAL_MS 20U
 #define SERVO_RECOVERY_QUIET_MS 30U
 #define SERVO_BUS_GAP_MS 1U

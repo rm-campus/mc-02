@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef SERVO_MIXED_PROBE
+#include "servo_mixed_probe.h"
+#else
 #define ID_REPLY_MS 100U
 #define ID_WRITE_REPLY_MS 250U
 #define ID_WRITE_SETTLE_MS 100U
@@ -29,6 +32,7 @@ static const char *id_bus_cause(IdBusResult result)
     }
     return "UNKNOWN";
 }
+#endif
 
 /* 只接受一到三位十进制设备地址。255 为广播地址，不允许写入或使用。 */
 static bool parse_id(const uint8_t **cursor, const uint8_t *end, uint8_t *id)
@@ -46,6 +50,7 @@ static bool parse_id(const uint8_t **cursor, const uint8_t *end, uint8_t *id)
     return true;
 }
 
+#ifndef SERVO_MIXED_PROBE
 /* UART 驱动在 TX 完成中断里立即切回接收；这里只识别期望 ID 的应答。 */
 static IdBusResult exchange(const char *command, uint8_t expected_id, uint32_t reply_ms)
 {
@@ -117,14 +122,30 @@ static IdBusResult verify_new_id(uint8_t id)
     }
     return result;
 }
+#endif
 
 static void handle_command(const uint8_t *line, size_t length, uint32_t session,
                            char *reply, size_t capacity)
 {
-    static const char read_prefix[] = "servo_read id ";
-    static const char set_prefix[] = "servo_set_id ";
     if (length != 0U && line[length - 1U] == '\r') --length;
     const uint8_t *end = line + length;
+#ifdef SERVO_MIXED_PROBE
+    static const char command[] = "mixed_servo_probe";
+    const size_t command_len = sizeof(command) - 1U;
+    uint8_t fashionstar_id = 0U;
+    if (length < command_len || memcmp(line, command, command_len) != 0) {
+        (void)snprintf(reply, capacity, "USAGE mixed_servo_probe [FS_ID]\n");
+        return;
+    }
+    const uint8_t *arg = line + command_len;
+    if (arg != end && (*arg++ != ' ' || !parse_id(&arg, end, &fashionstar_id) || arg != end)) {
+        (void)snprintf(reply, capacity, "ERR INVALID_ID (use 000..254)\n");
+        return;
+    }
+    ServoMixedProbe_Run(fashionstar_id, session, reply, capacity);
+#else
+    static const char read_prefix[] = "servo_read id ";
+    static const char set_prefix[] = "servo_set_id ";
     if (length >= sizeof(read_prefix) - 1U &&
         memcmp(line, read_prefix, sizeof(read_prefix) - 1U) == 0) {
         const uint8_t *p = line + sizeof(read_prefix) - 1U;
@@ -182,6 +203,7 @@ static void handle_command(const uint8_t *line, size_t length, uint32_t session,
         return;
     }
     (void)snprintf(reply, capacity, "OK ID %03u -> %03u\n", (unsigned)old_id, (unsigned)new_id);
+#endif
 }
 
 void ServoIdSetup_Task(void)
@@ -191,7 +213,11 @@ void ServoIdSetup_Task(void)
     size_t used = 0U;
     bool discard = false;
     uint32_t session = 0U;
+#ifdef SERVO_MIXED_PROBE
+    static char reply[USB_SERIAL_TX_CAPACITY];
+#else
     char reply[80] = "";
+#endif
     for (;;) {
         UsbSerial_Process();
         UsbSerialStatus usb;

@@ -9,6 +9,9 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#if SERVO_FASHIONSTAR_GRIPPER
+#include "fs_servo.h"
+#endif
 
 UART_HandleTypeDef huart7={7},huart5={5};
 static uint32_t tick,mask; static unsigned depth;
@@ -25,6 +28,9 @@ static uint32_t slow_reply_due;
 static char slow_reply[32];
 static uint16_t positions[5]={1500,1500,1500,1500,1500};
 static unsigned modes[5]={1,1,1,1,1};
+#if SERVO_FASHIONSTAR_GRIPPER
+static unsigned fs_moves, fs_holds, fs_queries, fs_misses_after_zp, fs_misses;
+#endif
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *);
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *);
 void Bsp_UnhandledUartError(UART_HandleTypeDef *);
@@ -50,6 +56,13 @@ int HAL_UART_Receive_IT(UART_HandleTypeDef *h,uint8_t *p,uint16_t n){
 int HAL_UART_Transmit_IT(UART_HandleTypeDef *h,const uint8_t *p,uint16_t n)
 {
     assert(h==&huart7&&!receive_mode&&!tx_pending);
+#if SERVO_FASHIONSTAR_GRIPPER
+    if (p[0]==0x12) {
+        assert(n>=6U && n<sizeof(tx));
+        memcpy(tx,p,n);tx[n]=0;tx_pending=true;tx_due=tick+2;++tx_count;
+        return HAL_OK;
+    }
+#endif
     assert(n>=2U && n<sizeof(tx) && p[n-1U]=='!');
     assert(!memchr(p,'\r',n) && !memchr(p,'\n',n));
     if(fail_tx && n==15U && p[9]=='T'){fail_tx=false;return HAL_ERROR;} /* Fail the motion, not an intervening due query. */
@@ -65,6 +78,48 @@ static void feed(const char *p)
 {
     while(*p && rx_byte) { *rx_byte=(uint8_t)*p++;rx_byte=NULL;HAL_UART_RxCpltCallback(&huart7); }
 }
+#if SERVO_FASHIONSTAR_GRIPPER
+static unsigned checksum8(const uint8_t *bytes,unsigned size)
+{
+    unsigned value=0;
+    for (unsigned i=0;i<size;++i) value+=bytes[i];
+    return value&255U;
+}
+
+static void fashionstar_step(const uint8_t *frame)
+{
+    assert(frame[0]==0x12 && frame[1]==0x4C && frame[4]==5U);
+    assert(checksum8(frame,4U+frame[3])==frame[4U+frame[3]]);
+    if (fs_misses) {
+        assert(frame[2]==0x0A);
+        --fs_misses;
+        return;
+    }
+    if (frame[2]==0x08) {
+        assert(frame[3]==7U && frame[7]==SERVO_RC_PERIOD_MS && frame[8]==0U);
+        assert(((unsigned)frame[9]|((unsigned)frame[10]<<8))==FS_GRIPPER_POWER_MW);
+        const unsigned word=(unsigned)frame[5]|((unsigned)frame[6]<<8);
+        const int angle=word>=32768U ? (int)word-65536 : (int)word;
+        assert(angle>=-1800 && angle<=1800);
+        positions[4]=FsServo_PulseFromAngle(angle);
+        ++fs_moves; ++moves;
+    } else if (frame[2]==0x18) {
+        assert(frame[3]==4U && frame[5]==0x11U);
+        ++fs_holds;
+    } else {
+        assert(frame[2]==0x0A && frame[3]==1U);
+        ++fs_queries;
+        if (!(reply_mask&16U)) return;
+        const uint16_t angle=(uint16_t)FsServo_AngleFromPulse(positions[4]);
+        uint8_t response[]={0x05,0x1C,0x0A,3U,5U,(uint8_t)angle,(uint8_t)(angle>>8),0};
+        response[7]=(uint8_t)checksum8(response,7U);
+        for (unsigned i=0;i<sizeof(response);++i) {
+            assert(rx_byte);
+            *rx_byte=response[i];rx_byte=NULL;HAL_UART_RxCpltCallback(&huart7);
+        }
+    }
+}
+#endif
 static void bus_step(void)
 {
     if(slow_reply[0] && (int32_t)(tick-slow_reply_due)>=0) {
@@ -73,6 +128,11 @@ static void bus_step(void)
     }
     if(!tx_pending||drop_tc||(drop_move_tc && strlen(tx)==15U && tx[9]=='T')||(int32_t)(tick-tx_due)<0)return;
     tx_pending=false;HAL_UART_TxCpltCallback(&huart7);assert(receive_mode&&rx_byte);
+#if SERVO_FASHIONSTAR_GRIPPER
+    if ((uint8_t)tx[0]==0x12) { fashionstar_step((const uint8_t *)tx); return; }
+    assert(strncmp(tx,"#005",4)!=0);
+    fs_misses=fs_misses_after_zp;
+#endif
     unsigned id=0,p=0,ms=0; assert(sscanf(tx,"#%3u",&id)==1&&id>=1&&id<=5);
     if(sscanf(tx,"#%3uP%4uT%4u!",&id,&p,&ms)==3) { positions[id-1]=(uint16_t)p;++moves;return; }
     if(!(reply_mask&(1U<<(id-1))))return;

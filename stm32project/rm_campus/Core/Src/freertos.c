@@ -173,6 +173,10 @@ void MX_FREERTOS_Init(void) {
   StatusTaskHandle = osThreadNew(StartStatusTask, NULL, &StatusTask_attributes);
   if (!RcTaskHandle || !ChassisTaskHandle || !ServoBusTaskHandle || !MonitorTaskHandle || !StatusTaskHandle)
     Error_Handler();
+#if ROBOT_SERVO_TELEMETRY_ENABLE
+  UsbTaskHandle = osThreadNew(StartUsbTask, NULL, &UsbTask_attributes);
+  if (UsbTaskHandle == NULL) Error_Handler();
+#endif
   return;
 #endif
 #ifdef SERVO_ID_SETUP

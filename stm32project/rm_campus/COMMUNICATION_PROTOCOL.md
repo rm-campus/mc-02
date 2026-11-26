@@ -4,6 +4,24 @@
 实现入口：[flash_tasks.c](App/Src/flash_tasks.c)、[usb_app.c](App/Src/usb_app.c)。
 任务、分区和底盘接口说明另见 [FLASH_TASKS.md](FLASH_TASKS.md)。
 
+## RobotControlTelemetry 舵机波形
+
+USB 数据口每 20 ms 尝试发一帧，USB 忙时跳过。帧以 `servo_wave:` 开始、以 LF 结束，
+17 个整数按以下顺序用逗号分隔。只回传数据，USB 输入不会进入运动控制。
+
+| 列（从 1 开始） | 含义 |
+|---|---|
+| 1 | MCU 时间戳（ms，32 位回绕） |
+| 2 | CH9 已接管档位，1 上、0 中、−1 下，2 等待遥控 |
+| 3–7 | ID1～5 的实测 P 值，0 表示反馈无效 |
+| 8–12 | ID1～5 的估算速度（P/s），−2147483648 表示无有效的速度样本 |
+| 13–17 | ID1～5 最近发送的目标 P 值，0 表示无有效目标 |
+
+每轴速度用两次读到的新位置反馈及其时间差计算，同一回包不会重复计算。
+普通遥控波形在反馈超过 200 ms 后断开曲线，U25-M 共线台架版使用 350 ms。
+重新收到位置后，第二个有效位置样本起才有速度。
+使用 `python tools/servo_scope.py` 可按 ID 看位置、已发目标和估算速度，程序会将无效数据画成空缺。
+
 ## 当前 Debug / Release：舵机监测与定向点动
 
 默认预设开启 `SERVO_STATUS_ONLY`。USB CDC 接受 ASCII 命令，行尾 LF 或 CRLF。

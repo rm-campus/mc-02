@@ -22,7 +22,7 @@ typedef struct {
 /* Task owner: ServoBusTask. Callbacks only move bytes/change direction/notify. */
 bool ServoUart_Init(void);
 bool ServoUart_Recover(void);
-/* 原样发送以 ! 结尾的命令，最后一个停止位发完后切回接收。 */
+/* 按长度原样发送字节，最后一个停止位发完后切回接收。 */
 bool ServoUart_Send(const char *data, uint16_t length);
 uint16_t ServoUart_Read(uint8_t *out, uint16_t capacity);
 uint32_t ServoUart_TakeEvents(void);

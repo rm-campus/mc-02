@@ -74,9 +74,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Bsp/Src/fxi6x.c
     Bsp/Src/servo_uart.c
     Bsp/Src/zp_servo.c
+    Bsp/Src/fs_servo.c
     App/Src/servo_app.c
     App/Src/robot_control.c
     App/Src/robot_servo.c
+    App/Src/robot_servo_usb.c
     Bsp/Src/buzzer.c
     Algorithm/Src/arm_kinematics.c
     App/Src/arm_velocity.c
@@ -117,7 +119,19 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ARM_MATH_MATRIX_CHECK)
 
 option(SERVO_ID_SETUP "Build the standalone UART7 servo ID setup firmware" OFF)
+option(SERVO_MIXED_PROBE "Build a read-only ZP/Fashion Star UART7 probe on the standalone servo task" OFF)
+if(SERVO_MIXED_PROBE AND NOT SERVO_ID_SETUP)
+    message(FATAL_ERROR "Mixed servo probe requires the standalone servo task")
+endif()
 option(ROBOT_CONTROL_PROFILE "Build the dedicated CH9 whole robot firmware" OFF)
+option(ROBOT_SERVO_TELEMETRY "Add read-only USB servo waveforms to robot control" OFF)
+option(ROBOT_FASHIONSTAR_GRIPPER "Use a Fashion Star U25-M for logical gripper 005" OFF)
+if(ROBOT_FASHIONSTAR_GRIPPER AND NOT ROBOT_CONTROL_PROFILE)
+    message(FATAL_ERROR "Fashion Star gripper requires robot control")
+endif()
+if(ROBOT_SERVO_TELEMETRY AND NOT ROBOT_CONTROL_PROFILE)
+    message(FATAL_ERROR "Servo telemetry requires the robot control profile")
+endif()
 if(ROBOT_CONTROL_PROFILE OR SERVO_ID_SETUP)
     set(status_only_default OFF)
 else()
@@ -136,9 +150,22 @@ if(ROBOT_CONTROL_PROFILE)
     endif()
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ROBOT_CONTROL_ENABLE=1)
     set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME "rm_campus_robot")
+    if(ROBOT_SERVO_TELEMETRY)
+        target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ROBOT_SERVO_TELEMETRY_ENABLE=1)
+        set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME "rm_campus_robot_telemetry")
+    endif()
+    if(ROBOT_FASHIONSTAR_GRIPPER)
+        target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE SERVO_FASHIONSTAR_GRIPPER=1)
+        set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME "rm_campus_robot_fs_gripper")
+    endif()
 endif()
 if(SERVO_ID_SETUP)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE App/Src/servo_id_setup.c)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE SERVO_ID_SETUP)
     set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME "rm_campus_servo_id")
+    if(SERVO_MIXED_PROBE)
+        target_sources(${CMAKE_PROJECT_NAME} PRIVATE App/Src/servo_mixed_probe.c)
+        target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE SERVO_MIXED_PROBE)
+        set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME "rm_campus_servo_mixed_probe")
+    endif()
 endif()

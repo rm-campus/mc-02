@@ -34,11 +34,32 @@
             }
         },
         {
+            "name": "RobotControlTelemetry",
+            "inherits": "RobotControl",
+            "cacheVariables": {
+                "ROBOT_SERVO_TELEMETRY": "ON"
+            }
+        },
+        {
+            "name": "RobotControlFashionStar",
+            "inherits": "RobotControlTelemetry",
+            "cacheVariables": {
+                "ROBOT_FASHIONSTAR_GRIPPER": "ON"
+            }
+        },
+        {
             "name": "ServoId",
             "inherits": "Release",
             "cacheVariables": {
                 "SERVO_ID_SETUP": "ON",
                 "SERVO_STATUS_ONLY": "OFF"
+            }
+        },
+        {
+            "name": "ServoMixedProbe",
+            "inherits": "ServoId",
+            "cacheVariables": {
+                "SERVO_MIXED_PROBE": "ON"
             }
         }
     ],
@@ -56,8 +77,20 @@
             "configurePreset": "RobotControl"
         },
         {
+            "name": "RobotControlTelemetry",
+            "configurePreset": "RobotControlTelemetry"
+        },
+        {
+            "name": "RobotControlFashionStar",
+            "configurePreset": "RobotControlFashionStar"
+        },
+        {
             "name": "ServoId",
             "configurePreset": "ServoId"
+        },
+        {
+            "name": "ServoMixedProbe",
+            "configurePreset": "ServoMixedProbe"
         }
     ]
 }

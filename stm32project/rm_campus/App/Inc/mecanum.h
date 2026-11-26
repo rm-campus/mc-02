@@ -8,7 +8,7 @@ void Mecanum_RobotTargets(const RobotControlState *state, float max_speed, float
 #endif
 
 /* vertical/horizontal/turn 分别是 CH2 前后、CH4 左右、CH1 旋转（-660～660）。
- * 前后和左右轴使用 deadband。旋转无死区，按归一化轮速计算，正值对应俯视顺时针。
+ * 平移轴用 deadband，自转轴用 MECANUM_TURN_DEADBAND。角速度正值对应俯视顺时针。
  * max_speed 为输出轴角速度上限（rad/s）。target_by_id[0..3] 依次交给 ID1～4
  * 的速度 PI，各轴正方向及四个轮位对应的 ID 在 motor_debug_config.h 中配置。 */
 void Mecanum_Mix(int16_t vertical, int16_t horizontal, int16_t turn, int16_t deadband,
