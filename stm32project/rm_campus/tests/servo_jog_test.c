@@ -39,9 +39,11 @@ static void timing(void)
 {
     modes[1]=3U;
     start_test();
+    const unsigned limited_ms=(9990U+SERVO_MAX_SPEED_DEG_S-1U)/SERVO_MAX_SPEED_DEG_S;
+    const unsigned duration=limited_ms>SERVO_JOG_MOVE_MS ? limited_ms : SERVO_JOG_MOVE_MS;
     input("servo_test_001_1\n");
     for(unsigned i=0;i<100U && !moves;++i)run(1);
-    assert(moves==1U && last_move_ms==666U && positions[0]==1574U);
+    assert(moves==1U && last_move_ms==duration && positions[0]==1574U);
     run(last_move_ms-1U);
     assert(!strstr(output,"SERVO_TEST DONE"));
     run(100);
@@ -50,7 +52,7 @@ static void timing(void)
     clear_log();
     input("servo_test_002_1\n");
     for(unsigned i=0;i<100U && moves==1U;++i)run(1);
-    assert(moves==2U && last_move_ms==666U && positions[1]==1611U);
+    assert(moves==2U && last_move_ms==duration && positions[1]==1611U);
     run(last_move_ms-1U);
     assert(!strstr(output,"SERVO_TEST DONE"));
     run(100);

@@ -22,8 +22,9 @@ static bool grip_settled, grip_stick_changed;
 
 static bool selected_id(RobotMode mode, unsigned id)
 {
-    return (mode == ROBOT_ARM && (id == 2 || id == 3 || id == 4)) ||
-           (mode == ROBOT_WRIST && id == 5);
+    const unsigned middle_axis=SERVO_FASHIONSTAR_GRIPPER ? 2U : 1U;
+    return (mode == ROBOT_ARM && (id == middle_axis || id == 3 || id == 4)) ||
+           (mode == ROBOT_WRIST && (id == 5 || (!SERVO_FASHIONSTAR_GRIPPER && id == 2)));
 }
 
 static int axis_stick(const RobotControlState *control, unsigned id)
@@ -109,13 +110,13 @@ bool RobotServo_Process(uint32_t now)
     const uint8_t stops_pending=Servo_RcStopPending();
     if (stops_pending) {
         priority_slots=arm_centered=0; grip_settled=false; grip_stick_changed=true;
-    } else if (control.mode==ROBOT_ARM) {
+    } else {
         const uint8_t fresh=arm_centered&arm_sticks;
-        priority_slots &= arm_sticks;
+        priority_slots &= (uint8_t)(arm_sticks|grip_slot);
         priority_slots |= fresh;
         for (unsigned slot=0; fresh && slot<SERVO_COUNT; ++slot)
             if (fresh&(1U<<slot)) priority_ticket[slot]=0;
-        arm_centered=selected&(uint8_t)~arm_sticks;
+        arm_centered=selected&(uint8_t)~(arm_sticks|grip_slot);
     }
     uint32_t elapsed=now-last_update;
     bool update=elapsed >= SERVO_RC_PERIOD_MS;
@@ -161,7 +162,7 @@ bool RobotServo_Process(uint32_t now)
             /* 非回中夹爪从任意已到达的目标再次拨动时，只优先首条新目标。 */
             if (input!=grip_stick) {
                 if (grip_settled) {
-                    priority_slots=bit;
+                    priority_slots|=bit;
                     priority_ticket[slot]=0;
                 }
                 grip_stick=input;

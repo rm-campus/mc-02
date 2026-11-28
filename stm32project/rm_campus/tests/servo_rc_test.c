@@ -39,18 +39,20 @@ int main(void)
     assert(!control().armed_mask);center();run(299);assert(!control().armed_mask);run(10);
     assert(control().armed_mask==7);
     assert(Servo_MovePulse(1,2000,100,NULL)==SERVO_BUSY);
+    const float full_travel=SERVO_MAX_SPEED_DEG_S*1000.0f/270.0f;
+    const float half_stick_travel=full_travel*0.45f;
     receiver.rocker_l_v=660;receiver.rocker_l_h=-660;receiver.rocker_r_h=330;run(500);
-    assert(positions[0]>=1552 && positions[0]<=1557);
-    assert(positions[1]>=1443 && positions[1]<=1448);
-    assert(positions[2]>=1523 && positions[2]<=1526);
+    assert(fabsf(positions[0]-(1500+full_travel))<=7.0f);
+    assert(fabsf(positions[1]-(1500-full_travel))<=7.0f);
+    assert(fabsf(positions[2]-(1500+half_stick_travel))<=5.0f);
     assert(positions[3]==1500 && positions[4]==1500);
     center();run(80);uint16_t held=positions[0];run(300);assert(positions[0]==held);
     /* Switching with a held stick stops the old group and waits for the new axes. */
     receiver.switch_c=-1;receiver.rocker_l_v=660;run(500);assert(!control().armed_mask);
     assert(positions[0]==held && positions[3]==1500);center();run(400);assert(control().armed_mask==24);
     receiver.rocker_l_v=660;receiver.rocker_l_h=-660;receiver.rocker_r_h=660;run(500);
-    assert(positions[3]>=1552 && positions[3]<=1557);
-    assert(positions[4]>=1443 && positions[4]<=1448 && positions[0]==held);
+    assert(fabsf(positions[3]-(1500+full_travel))<=7.0f);
+    assert(fabsf(positions[4]-(1500-full_travel))<=7.0f && positions[0]==held);
     /* Manual halt must latch, including removal of pending RC moves. */
     assert(Servo_Pause(4,NULL)==SERVO_QUEUED);run(80);held=positions[3];run(400);
     assert(positions[3]==held && (control().fault_mask&8) && (control().armed_mask&16));

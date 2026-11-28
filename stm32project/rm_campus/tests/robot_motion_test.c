@@ -37,6 +37,7 @@ int HAL_UART_Transmit_IT(UART_HandleTypeDef *h, const uint8_t *p, uint16_t n)
     return result;
 }
 
+#if SERVO_FASHIONSTAR_GRIPPER
 static void wrist_silence(void)
 {
     assert(Servo_Init());
@@ -61,6 +62,7 @@ static void wrist_silence(void)
     assert(Servo_MovePulse(3,2056,20,NULL)==SERVO_RANGE);
     puts("PASS: no 001 query/motion/stop/torque/mode frames; shoulder rejects targets outside P945..P2055");
 }
+#endif
 static void publish_rc_frame(void)
 {
     rc.last_valid_ms=tick;
@@ -151,6 +153,7 @@ static void first_stick_frame(StickCase test)
 {
     const bool grip=test==STICK_GRIP_CENTER;
     const bool second_axis=test==STICK_SECOND_AXIS;
+    const unsigned second_id=SERVO_FASHIONSTAR_GRIPPER ? 2U : 4U;
     if (grip) {
         rc.rocker_r_v=660;
         positions[4]=ROBOT_GRIPPER_CLOSED_P;
@@ -168,8 +171,9 @@ static void first_stick_frame(StickCase test)
     }
 
     record_wire=true;
-    const unsigned missing_bit=second_axis ? 8U : 2U;
-    const char *missing_query=second_axis ? "#004PRAD!" : "#002PRAD!";
+    const bool miss_wrist=second_axis && SERVO_FASHIONSTAR_GRIPPER;
+    const unsigned missing_bit=miss_wrist ? 8U : 2U;
+    const char *missing_query=miss_wrist ? "#004PRAD!" : "#002PRAD!";
     reply_mask&=~missing_bit;
     unsigned last=0;
     for (unsigned elapsed=0; elapsed<SERVO_POLL_PERIOD_MS+SERVO_POLL_SLOT_MS; ++elapsed) {
@@ -182,7 +186,10 @@ static void first_stick_frame(StickCase test)
 
     const uint32_t first_allowed=tx_due+SERVO_REPLY_TIMEOUT_MS+SERVO_RECOVERY_QUIET_MS;
     if (grip) rc.rocker_r_v=0;
-    else if (second_axis) rc.rocker_l_h=660;
+    else if (second_axis) {
+        if (SERVO_FASHIONSTAR_GRIPPER) rc.rocker_l_h=660;
+        else rc.rocker_r_h=660;
+    }
     else if (test!=STICK_NEUTRAL) rc.rocker_l_v=660;
     if (test==STICK_RELEASED) {
         publish_rc_frame();
@@ -217,8 +224,10 @@ static void first_stick_frame(StickCase test)
         return;
     }
     if (second_axis) {
-        assert(sscanf(wire[last].frame,"#002P%4uT%4u!",&target,&duration)==2 && target>1500U);
-        puts("PASS: a new CH4 input gets first-MOVE priority while CH2 remains held");
+        unsigned addressed;
+        assert(sscanf(wire[last].frame,"#%3uP%4uT%4u!",&addressed,&target,&duration)==3 &&
+               addressed==second_id && target>1500U);
+        puts("PASS: a newly moved joint axis gets first-MOVE priority while CH2 remains held");
         return;
     }
     assert(sscanf(wire[last].frame,"#003P%4uT%4u!",&target,&duration)==2 && target>1500U);
@@ -279,20 +288,29 @@ static void joint_speed_limit(void)
     confirm_initial_gear(ROBOT_SWITCH_UP,ROBOT_DRIVE);
     assert(Servo_Init());
     operate(2400);
+    assert(state(1).online && state(1).mode_valid);
     assert(state(2).mode_valid && state(2).mode==3);
     assert(state(3).mode_valid && state(3).mode==1);
     assert(state(4).mode_valid && state(4).mode==4);
 
     rc.switch_c=ROBOT_SWITCH_MIDDLE;
     operate(80);
-    rc.rocker_l_v=660; rc.rocker_l_h=-660; rc.rocker_r_h=660;
+    rc.rocker_l_v=660; rc.rocker_r_h=660; rc.rocker_r_v=660;
     operate(1000);
-    /* One second at 15°/s is 111 P in 270° mode and 167 P in 180° mode. */
-    assert(abs((int)positions[2]-1611)<=5);
-    assert(abs((int)positions[1]-1333)<=6);
-    assert(abs((int)positions[3]-1667)<=6);
-    assert(positions[0]==1500 && positions[4]==1500);
-    puts("PASS: 002/003/004 respect 15 deg/s full-stick target rate in 180 and 270 degree modes");
+    const int delta_270=(int)lroundf(2000.0f*SERVO_MAX_SPEED_DEG_S/270.0f);
+    const int delta_180=(int)lroundf(2000.0f*SERVO_MAX_SPEED_DEG_S/180.0f);
+    assert(abs((int)positions[0]-(1500+delta_270))<=10);
+    assert(abs((int)positions[2]-(1500+delta_270))<=10);
+    assert(abs((int)positions[3]-(1500+delta_180))<=12);
+    assert(positions[1]==1500 && positions[4]==1500);
+
+    rc.rocker_l_v=0; rc.rocker_r_h=0;
+    rc.switch_c=ROBOT_SWITCH_DOWN;
+    operate(120);
+    rc.rocker_l_h=-660;
+    operate(1000);
+    assert(abs((int)positions[1]-(1500-delta_180))<=12 && positions[4]==1500);
+    puts("PASS: the mapped 001/002/003/004 axes respect the shared speed limit in both position spans");
 }
 
 static void wheels(void)
@@ -368,6 +386,7 @@ static void sparse_bus(void)
     assert(start>1500);
     uint16_t previous=start;
     uint32_t last_move_tick=tick, max_gap=0;
+    const uint32_t feedback_before_motion=state(3).position_ms;
     for (unsigned i=0; i<3000U; ++i) {
         operate(1);
         if (positions[2]!=previous) {
@@ -376,11 +395,14 @@ static void sparse_bus(void)
             previous=positions[2];
             last_move_tick=tick;
         }
-        assert(state(3).online && tick-state(3).position_ms<100U);
+        const ServoState shoulder=state(3);
+        assert(shoulder.online);
+        /* 首条动作可以先于上一个离线查询后恢复的位置回读。 */
+        if(shoulder.position_ms!=feedback_before_motion)assert(tick-shoulder.position_ms<100U);
     }
     assert(max_gap<=45U);
-    /* Three seconds at quarter stick and 15°/s full scale, in 270° mode. */
-    assert(positions[2]-start>=81 && positions[2]-start<=85);
+    const int expected=(int)lroundf(3.0f*0.25f*2000.0f*SERVO_MAX_SPEED_DEG_S/270.0f);
+    assert(abs((int)(positions[2]-start)-expected)<=6);
     printf("Sparse bus: max shoulder frame gap %lu ms, advance %u P in 3 s\n",
            (unsigned long)max_gap,(unsigned)(positions[2]-start));
     rc.rocker_l_v=0;
@@ -409,8 +431,8 @@ static void fashionstar_gripper(void)
     assert(state(5).online && state(5).id_seen);
     assert(state(5).position==open && fs_queries>0 && fs_moves==0);
     rc.rocker_r_v=0; operate(1000);
-    /* One second at 15°/s advances 83 P in the 360° representation. */
-    assert(abs((int)positions[4]-(open-83))<=5);
+    const int expected=(int)lroundf(2000.0f*SERVO_MAX_SPEED_DEG_S/360.0f);
+    assert(abs((int)positions[4]-(open-expected))<=8);
     operate(sweep_ms/2U-400U);
     assert(positions[4]==halfway && state(5).target==halfway && fs_moves>0);
     rc.rocker_r_v=330; operate(sweep_ms/4U+600U);
@@ -476,11 +498,11 @@ int main(int argc,char **argv)
         joint_speed_limit();
         return 0;
     }
+#if SERVO_FASHIONSTAR_GRIPPER
     if (argc==2 && !strcmp(argv[1],"wrist-silence")) {
         wrist_silence();
         return 0;
     }
-#if SERVO_FASHIONSTAR_GRIPPER
     if (argc==2 && !strcmp(argv[1],"fashionstar")) {
         fashionstar_gripper();
         return 0;
@@ -499,7 +521,7 @@ int main(int argc,char **argv)
     assert(Servo_RcMovePulse(5,749,20,NULL)==SERVO_RANGE);
     assert(Servo_RcMovePulse(5,1501,20,NULL)==SERVO_RANGE);
     rc.rocker_r_v=0;operate(1000);
-    assert(abs((int)positions[4]-1389)<=5);
+    assert(abs((int)positions[4]-(1500-(int)lroundf(2000.0f*SERVO_MAX_SPEED_DEG_S/270.0f)))<=8);
     operate(3200);
     assert(positions[4]==1125 && state(5).target==1125);
     /* 切档取消未发送的目标，夹爪保持最后到达的位置。 */
@@ -511,19 +533,21 @@ int main(int argc,char **argv)
     assert(positions[4]==750 && state(5).target==750);
     rc.rocker_r_v=660;operate(7350);
     assert(positions[4]==1500 && state(5).target==1500);
-    rc.rocker_l_v=1;rc.rocker_l_h=-1;operate(7000);
-    assert(positions[0]==1500 && !state(1).online && positions[3]==1500 &&
-           positions[1]==1500 && positions[2]==1500);
+    rc.rocker_l_v=1;rc.rocker_l_h=330;operate(800);
+    assert(positions[0]==1500 && state(1).online && positions[3]==1500 &&
+           positions[1]>1500 && positions[2]==1500);
     rc.switch_c=ROBOT_SWITCH_UP;rc.rocker_l_v=0;rc.rocker_l_h=0;operate(300);
     uint32_t mode_ticket;
     assert(Servo_RequestModeProbe(3,&mode_ticket)==SERVO_QUEUED);
     operate(2U*SERVO_MODE_PROBE_TIMEOUT_MS);
     assert(!state(2).mode_valid && state(3).mode_valid && state(3).mode==5);
+    const uint16_t elbow=positions[1];
     rc.switch_c=ROBOT_SWITCH_MIDDLE;
-    rc.rocker_l_v=-300;rc.rocker_l_h=300;rc.rocker_r_h=-300;operate(750);
-    assert(positions[2]<1500 && positions[1]>1500 && positions[3]<1500 && positions[4]==1500 && !grip_stops);
+    rc.rocker_l_v=-300;rc.rocker_l_h=300;rc.rocker_r_h=-300;rc.rocker_r_v=300;operate(750);
+    assert(positions[0]>1500 && positions[2]<1500 && positions[1]==elbow &&
+           positions[3]<1500 && positions[4]==1500 && !grip_stops);
     /* 运动发送失败且停止无应答。同档等新位置再自动接管，从新位置继续。 */
-    rc.rocker_l_v=0; rc.rocker_l_h=0; rc.rocker_r_h=0; operate(100);
+    rc.rocker_l_v=0; rc.rocker_l_h=0; rc.rocker_r_h=0; rc.rocker_r_v=0; operate(100);
     uint16_t shoulder_before=positions[2];
     fail_tx=true; rc.rocker_l_v=300; operate(500);
     assert(!fail_tx && positions[2]>shoulder_before && Servo_RcInhibited()==0U);

@@ -28,7 +28,6 @@ with tempfile.TemporaryDirectory() as d:
                         "-I", "Bsp/Inc", *sources, "-lm", "-o", str(exe)], check=True,cwd=root)
         subprocess.run([str(exe)], check=True)
         subprocess.run([str(exe), "sparse"], check=True)
-        subprocess.run([str(exe), "wrist-silence"], check=True)
         subprocess.run([str(exe), "joint-lead-limit"], check=True)
         subprocess.run([str(exe), "joint-speed-limit"], check=True)
         for case in ("automatic-metadata-window", "automatic-metadata-window-wrist-start",
@@ -40,6 +39,7 @@ with tempfile.TemporaryDirectory() as d:
                     "-I", str(directory), "-I", "App/Inc", "-I", "Bsp/Inc",
                     *sources, "-lm", "-o", str(exe)], check=True, cwd=root)
     subprocess.run([str(exe), "fashionstar"], check=True)
+    subprocess.run([str(exe), "wrist-silence"], check=True)
     subprocess.run([str(exe), "joint-lead-limit"], check=True)
     for case in ("automatic-metadata-window", "neutral-frame", "first-stick-frame",
                  "released-stick-frame", "second-axis-frame"):

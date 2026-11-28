@@ -3,7 +3,7 @@
 #include "robot_control_config.h"
 /* 所有舵机共用的输出轴位置指令限速，单位为整数 °/s。 */
 #ifndef SERVO_MAX_SPEED_DEG_S
-#define SERVO_MAX_SPEED_DEG_S 15U
+#define SERVO_MAX_SPEED_DEG_S 30U
 #endif
 #if SERVO_MAX_SPEED_DEG_S < 1
 #error "Servo speed limit must be positive"

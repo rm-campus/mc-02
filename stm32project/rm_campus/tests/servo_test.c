@@ -66,8 +66,8 @@ int HAL_UART_Transmit_IT(UART_HandleTypeDef *h,const uint8_t *p,uint16_t n)
     }
 #endif
     assert(n>=2U && n<sizeof(tx) && p[n-1U]=='!');
-#if ROBOT_CONTROL_ENABLE
-    assert(n<4U || memcmp(p,"#001",4U)!=0); /* 正式固件在线上不出现任何 001 帧。 */
+#if SERVO_FASHIONSTAR_GRIPPER
+    assert(n<4U || memcmp(p,"#001",4U)!=0); /* 飞特台架预设隔离 001。 */
 #endif
     assert(!memchr(p,'\r',n) && !memchr(p,'\n',n));
     if(fail_tx && n==15U && p[9]=='T'){fail_tx=false;return HAL_ERROR;} /* Fail the motion, not an intervening due query. */
@@ -258,18 +258,24 @@ static void speed_ceiling(void)
     reply_mask&=~2U; /* Exercise a reversal before another position sample can arrive. */
     motion_hold_mask|=2U;
     usb.ready=true;
+    const unsigned reversal_ms=(54000U+SERVO_MAX_SPEED_DEG_S-1U)/SERVO_MAX_SPEED_DEG_S;
     input("servo_move 002 1900 20\n");
     for(unsigned i=0;i<100U && moves==before;++i)run(1);
-    assert(moves==before+1U && last_move_ms==3600U);
+    assert(moves==before+1U && last_move_ms==reversal_ms);
     input("servo_move 002 1500 20\n");
     for(unsigned i=0;i<100U && moves==before+1U;++i)run(1);
-    assert(moves==before+2U && last_move_ms==3600U && state(2).position_ms==sample_ms);
+    assert(moves==before+2U && last_move_ms==reversal_ms && state(2).position_ms==sample_ms);
 
     uint32_t ticket;
     assert(Servo_MovePulse(2,700,20,&ticket)==SERVO_QUEUED);
-    for(unsigned i=0;i<100U && state(2).last_ticket!=ticket;++i)run(1);
-    /* Feedback alone fits the T field, but the far travel bound requires T10800. */
-    assert(state(2).last_ticket==ticket && state(2).last_result==SERVO_RANGE && moves==before+2U);
+    for(unsigned i=0;i<100U && (state(2).last_ticket!=ticket || state(2).last_result==SERVO_QUEUED);++i)run(1);
+    /* The pending reversal can still be anywhere through P1900. */
+    const unsigned bounded_ms=(162000U+SERVO_MAX_SPEED_DEG_S-1U)/SERVO_MAX_SPEED_DEG_S;
+    const bool fits=bounded_ms<=9999U;
+    const unsigned expected_moves=before+2U+(fits ? 1U : 0U);
+    assert(state(2).last_ticket==ticket && state(2).last_result==(fits ? SERVO_OK : SERVO_RANGE));
+    assert(moves==expected_moves);
+    if(fits) assert(last_move_ms==bounded_ms);
 
     usb.ready=false;
     reply_mask|=2U;
@@ -277,8 +283,8 @@ static void speed_ceiling(void)
     run(1500);
     assert(state(2).online && state(2).mode_valid);
     assert(Servo_MovePulse(2,1500,9999U,&ticket)==SERVO_QUEUED);
-    for(unsigned i=0;i<100U && moves==before+2U;++i)run(1);
-    assert(moves==before+3U && last_move_ms==9999U);
+    for(unsigned i=0;i<100U && moves==expected_moves;++i)run(1);
+    assert(moves==expected_moves+1U && last_move_ms==9999U);
 }
 
 int main(void)
@@ -326,7 +332,8 @@ int main(void)
     assert(Servo_MovePulse(1,1600,1000,&ticket)==SERVO_QUEUED);
     assert(Servo_MovePulse(1,1700,1000,&ticket)==SERVO_QUEUED);
     run(80);assert(moves==1&&state(1).position==1700&&state(1).last_result==SERVO_OK);
-    assert(last_move_ms==1800U); /* Coalesced target is 200 P from actual feedback. */
+    const unsigned limited_ms=(27000U+SERVO_MAX_SPEED_DEG_S-1U)/SERVO_MAX_SPEED_DEG_S;
+    assert(last_move_ms==(limited_ms>1000U ? limited_ms : 1000U)); /* Coalesced target is 200 P away. */
     assert(Servo_MovePulse(1,2000,1000,&ticket)==SERVO_QUEUED);
     assert(Servo_Stop(1,&ticket)==SERVO_QUEUED);run(80);assert(moves==1&&state(1).last_result==SERVO_OK);
     reply_mask&=~1U;run(600);assert(!state(1).online&&state(2).online);

@@ -65,8 +65,8 @@ static bool mode_current, mode_verify, mode_yield_poll;
 static bool due(uint32_t now, uint32_t when) { return (int32_t)(now-when)>=0; }
 static bool bus_slot_active(unsigned slot)
 {
-    /* 保留示波器槽位；正式遥控的腕俯仰 001 不参与任何 UART7 事务。 */
-    return !ROBOT_CONTROL_ENABLE || configs[slot].id != 1U;
+    /* 飞特夹爪台架预设仍隔离原腕俯仰；众灵整机允许 001 正常收发。 */
+    return !SERVO_FASHIONSTAR_GRIPPER || configs[slot].id != 1U;
 }
 static bool fashionstar_slot(unsigned slot)
 {

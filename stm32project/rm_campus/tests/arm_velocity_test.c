@@ -147,32 +147,40 @@ static ArmVelocityCommand command_for_axis(unsigned axis,float speed_deg_s)
     const ArmKinConfig geometry={.l1_m=ARM_L12_M,.l2_m=ARM_L23_M};
     float jacobian[4][4];
     assert(ArmKin_Jacobian(&geometry,s.q_rad,jacobian));
+    /* 配合肩轴反向运动，让肘轴限速测试仍处于腕部平移限速内。 */
+    const float shoulder_speed=axis==1U ? -0.30f*speed_rad_s : 0.0f;
     return (ArmVelocityCommand){
-        .vx_m_s=jacobian[0][axis]*speed_rad_s,.vz_m_s=jacobian[1][axis]*speed_rad_s,
-        .pitch_rad_s=jacobian[2][axis]*speed_rad_s,.roll_rad_s=jacobian[3][axis]*speed_rad_s};
+        .vx_m_s=jacobian[0][axis]*speed_rad_s+jacobian[0][0]*shoulder_speed,
+        .vz_m_s=jacobian[1][axis]*speed_rad_s+jacobian[1][0]*shoulder_speed,
+        .pitch_rad_s=jacobian[2][axis]*speed_rad_s+jacobian[2][0]*shoulder_speed,
+        .roll_rad_s=jacobian[3][axis]*speed_rad_s};
 }
 static void joint_limit(unsigned axis)
 {
     static const uint8_t ids[5]={3U,2U,1U,4U,5U};
     if(axis==0U) {
-        /* 屈肘至约120°，使肩轴限速附近的指令也符合50 mm/s腕交点限速。 */
-        positions[1]=1722;run(150);
+        /* 屈肘至约158°，使肩轴限速附近的指令仍低于50 mm/s。 */
+        positions[1]=2000;run(150);
+    } else if(axis==1U) {
+        positions[1]=1278;run(150);
     }
     start_arm();
     /* DLS 解受浮点精度和阻尼影响，四个 IK 轴在上限下方预留少量裕量。 */
-    const float allowed_deg_s=axis==4U ? 15.0f : 14.99f;
+    const float speed_limit_deg_s=SERVO_MAX_SPEED_DEG_S;
+    const float allowed_deg_s=axis==4U ? speed_limit_deg_s : speed_limit_deg_s-0.01f;
     drive(command_for_axis(axis,allowed_deg_s),ARM_PERIOD_MS+1U);
     ArmStatus s=arm_state();
     const float accepted_deg_s=ARM_RAD_TO_DEG(s.joint_velocity_rad_s[axis]);
-    assert(s.state==ARM_RUNNING && accepted_deg_s>14.9f && accepted_deg_s<15.001f);
+    assert(s.state==ARM_RUNNING && accepted_deg_s>speed_limit_deg_s-0.1f &&
+           accepted_deg_s<speed_limit_deg_s+0.001f);
     drive(zero,150);
     assert(moves && arm_state().state==ARM_RUNNING);
     const unsigned before=moves;
-    drive(command_for_axis(axis,-15.1f),50);
+    drive(command_for_axis(axis,-(speed_limit_deg_s+0.1f)),50);
     s=arm_state();
     assert(s.state==ARM_FAULT && s.error==ARM_ERROR_JOINT_SPEED_LIMIT);
-    assert(s.joint==axis+1U && s.servo_id==ids[axis] && s.limit==15.0f);
-    assert(s.requested>15.0f && s.requested<15.2f && moves==before);
+    assert(s.joint==axis+1U && s.servo_id==ids[axis] && s.limit==speed_limit_deg_s);
+    assert(s.requested>speed_limit_deg_s && s.requested<speed_limit_deg_s+0.2f && moves==before);
     verify_reset_only(&s);
 }
 static void unreachable(void)
