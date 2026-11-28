@@ -252,26 +252,24 @@ int main(int argc,char **argv)
     modes[2]=5;           /* ID3 回报非定位模式，整机仍下发 P/T。 */
     assert(Servo_Init());operate(850);
     assert(positions[4]==1500 && moves==0);
-    rc.rocker_r_v=0;operate(50); rc.rocker_r_v=330;operate(3500);
-    assert(positions[4]==2000);
-    /* 已上队列但还未发出的目标不能在切档后冒出来；也不能用测得的夹持位置覆盖目标。 */
-    assert(Servo_RcMovePulse(5,2200,20,NULL)==SERVO_QUEUED);
+    assert(Servo_RcMovePulse(5,749,20,NULL)==SERVO_RANGE);
+    assert(Servo_RcMovePulse(5,1501,20,NULL)==SERVO_RANGE);
+    rc.rocker_r_v=0;operate(2400);
+    assert(positions[4]==1125 && state(5).target==1125);
+    /* 切档取消未发送的目标，夹爪保持最后到达的位置。 */
+    assert(Servo_RcMovePulse(5,1300,20,NULL)==SERVO_QUEUED);
     rc.switch_c=ROBOT_SWITCH_UP;rc.last_valid_ms=tick;++rc.frame_count;Fxi6x_OnFrame(&rc);
     rc.rocker_r_v=-660;operate(300);
-    assert(positions[4]==2000 && grip_stops==0);
-    positions[4]=1800; /* 模拟物体阻挡，协议反馈位置偏离已经发送的 P2000。 */
-    rc.switch_c=ROBOT_SWITCH_DOWN;operate(300);
-    assert(positions[4]==1800 && state(5).target==2000);
-    rc.rocker_r_v=-332;operate(100);assert(state(5).target==2000);
-    rc.rocker_r_v=-328;operate(100);rc.rocker_r_v=0;operate(3500);
-    assert(positions[4]==1500);
-    rc.rocker_r_v=-660;operate(7000);
-    assert(positions[4]==2500);
+    assert(positions[4]==1125 && state(5).target==1125 && grip_stops==0);
+    rc.switch_c=ROBOT_SWITCH_DOWN;operate(2400);
+    assert(positions[4]==750 && state(5).target==750);
+    rc.rocker_r_v=660;operate(4300);
+    assert(positions[4]==1500 && state(5).target==1500);
     rc.rocker_l_v=1;rc.rocker_l_h=-1;operate(7000);
     assert(positions[0]==1500 && !state(1).online && positions[3]==1500 &&
            positions[1]==1500 && positions[2]==1500);
     rc.switch_c=ROBOT_SWITCH_MIDDLE;rc.rocker_l_v=-300;rc.rocker_l_h=300;rc.rocker_r_h=-300;operate(750);
-    assert(positions[2]<1500 && positions[1]>1500 && positions[3]<1500 && positions[4]==2500 && !grip_stops);
+    assert(positions[2]<1500 && positions[1]>1500 && positions[3]<1500 && positions[4]==1500 && !grip_stops);
     assert(!state(2).mode_valid && state(3).mode_valid && state(3).mode==5);
     /* 运动发送失败且停止无应答。同档等新位置再自动接管，从新位置继续。 */
     rc.rocker_l_v=0; rc.rocker_l_h=0; rc.rocker_r_h=0; operate(100);
@@ -296,6 +294,6 @@ int main(int argc,char **argv)
     rc.rocker_l_v=-660; operate(8000);
     assert(positions[2]==945 && state(3).target==945);
     assert(!depth);
-    puts("PASS: robot chassis neutral, gripper pickup/hold, mode-independent servo motion and same-gear recovery");
+    puts("PASS: ZP 005 follows signed CH3 at P750/P1125/P1500 with range checks, gear cancellation, and same-gear recovery");
     return 0;
 }

@@ -73,9 +73,11 @@
 #ifndef ROBOT_TRACK_M
 #define ROBOT_TRACK_M 0.0f
 #endif
-/* 暂按现有 ID5 协议上限试配，尚未验证闭合方向/机械端点；标定后填实测 P。
- * 可置 0 单独停用夹爪控制。该值绝不用于改写舵机的内部参数。 */
+/* 众灵夹爪 005 的 CH3 负满杆、正满杆端点。闭合端置 0 可停用夹爪遥控。 */
+#ifndef ROBOT_GRIPPER_OPEN_P
+#define ROBOT_GRIPPER_OPEN_P 750U
+#endif
 #ifndef ROBOT_GRIPPER_CLOSED_P
-#define ROBOT_GRIPPER_CLOSED_P 2500U
+#define ROBOT_GRIPPER_CLOSED_P 1500U
 #endif
 #endif

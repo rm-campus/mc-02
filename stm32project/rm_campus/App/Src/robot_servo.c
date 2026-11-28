@@ -5,8 +5,6 @@
 #include <math.h>
 #if SERVO_FASHIONSTAR_GRIPPER
 #include "fs_servo.h"
-#else
-#include <stdlib.h>
 #endif
 
 /* 此模块只在 ServoBusTask 使用，轴表按总线 ID 排序；掩码始终按设备槽位。 */
@@ -16,11 +14,6 @@ static float position[5];
 static uint16_t queued_position[5];
 static uint8_t initialized, previous_slots;
 static uint32_t generation, last_update, last_ready_count;
-#if !SERVO_FASHIONSTAR_GRIPPER
-static uint16_t boot_p;
-static bool picked_up, have_previous_stick;
-static int previous_stick;
-#endif
 
 static bool selected_id(RobotMode mode, unsigned id)
 {
@@ -39,17 +32,6 @@ static bool usable(const ServoState *s, const ServoConfig *c)
     return s->position_seen && s->position >= c->minimum && s->position <= c->maximum;
 }
 
-#if !SERVO_FASHIONSTAR_GRIPPER
-/* 众灵夹爪的两个等效接管点在 +threshold 和 -threshold。 */
-static bool crosses(int old, int current, float threshold)
-{
-    int low = old < current ? old : current;
-    int high = old > current ? old : current;
-    return (low <= threshold && threshold <= high) || (low <= -threshold && -threshold <= high);
-}
-
-#endif
-
 bool RobotServo_Process(uint32_t now)
 {
     RobotControlState control = RobotControl_Get(now);
@@ -64,19 +46,9 @@ bool RobotServo_Process(uint32_t now)
         Servo_RobotCancelQueuedGrip();
         Servo_RcStopMask(interrupted ? previous_slots : previous_slots & (uint8_t)~grip_slot);
         initialized=0; last_update=now;
-#if !SERVO_FASHIONSTAR_GRIPPER
-        picked_up=false; have_previous_stick=false;
-#endif
         generation=control.generation; previous_slots=selected; last_ready_count=control.ready_count;
         Servo_RcClearInhibit();
     }
-#if !SERVO_FASHIONSTAR_GRIPPER
-    if (!boot_p) {
-        ServoState g;
-        if (Servo_CopyState(5,&g) && g.position_seen &&
-            g.position>=500 && g.position<=2500) boot_p=g.position;
-    }
-#endif
     if (!selected) {
         (void)Servo_ControlRelease(SERVO_OWNER_RC);
         return false;
@@ -99,9 +71,6 @@ bool RobotServo_Process(uint32_t now)
             if (initialized&bit) {
                 if (!(stops_pending&bit)) Servo_RcStopMask(bit);
                 initialized&=(uint8_t)~bit;
-#if !SERVO_FASHIONSTAR_GRIPPER
-                if (id==5) { picked_up=false; have_previous_stick=false; }
-#endif
             }
             continue;
         }
@@ -109,9 +78,6 @@ bool RobotServo_Process(uint32_t now)
         float *target=&position[id-1];
         if (!(initialized&bit)) {
             *target=s.position;
-#if !SERVO_FASHIONSTAR_GRIPPER
-            if (id==5 && s.target>=c->minimum && s.target<=c->maximum) *target=s.target;
-#endif
             queued_position[id-1]=(uint16_t)*target;
             initialized |= bit;
         }
@@ -121,23 +87,13 @@ bool RobotServo_Process(uint32_t now)
         const float speed = axes[id-1].speed * (id==5 ? 1.0f : ROBOT_JOINT_SPEED_SCALE);
         const float step=speed*dt*(2000.0f/span);
         if (id==5) {
-            const int stick=control.rc.rocker_r_v;
+            const float fraction=(control.rc.rocker_r_v+660)/1320.0f;
 #if SERVO_FASHIONSTAR_GRIPPER
-            const float fraction=(stick+660)/1320.0f;
             const int angle=(int)lroundf(FS_GRIPPER_OPEN_DDEG+fraction*FS_GRIPPER_TRAVEL_DDEG);
             const float goal=FsServo_PulseFromAngle(angle);
 #else
-            const uint16_t closed_p=ROBOT_GRIPPER_CLOSED_P;
-            if (!boot_p || closed_p<c->minimum || closed_p>c->maximum || boot_p==closed_p) continue;
-            if (!picked_up) {
-                float stroke=(float)closed_p-boot_p;
-                const float held=*target;
-                float threshold=fminf(660.0f,fmaxf(0.0f,(held-boot_p)*660.0f/stroke));
-                picked_up=crosses(have_previous_stick?previous_stick:stick,stick,threshold);
-                previous_stick=stick; have_previous_stick=true;
-                if (!picked_up) continue;
-            }
-            const float goal=boot_p+((float)closed_p-boot_p)*abs(stick)/660.0f;
+            if (ROBOT_GRIPPER_CLOSED_P==0U) continue;
+            const float goal=ROBOT_GRIPPER_OPEN_P+fraction*((float)ROBOT_GRIPPER_CLOSED_P-ROBOT_GRIPPER_OPEN_P);
 #endif
             motion_requested |= fabsf(goal-*target)>=1.0f;
             if (!update) continue;

@@ -40,7 +40,7 @@ ASCII 栏便于读指令；时间戳取自 MCU 接收中断。掉线或背压导
 （需 pyserial 和 Tkinter），选择板子的 USB 串口以及舵机 ID。也可在 VOFA+ 选择 FireWater。
 波形字段见 [USB 舵机波形](COMMUNICATION_PROTOCOL.md)。
 
-**正式版一（U25-M 夹爪）。** 使用 `RobotControlFashionStar` 预设，产物为
+**U25-M 夹爪预设。** 使用 `RobotControlFashionStar` 预设，产物为
 `build/RobotControlFashionStar/rm_campus_robot_fs_gripper.elf`，保留 USB 示波器 005 通道。
 夹爪行程和混合总线接线见 [U25-M 接入说明](SERVO_INTEGRATION.md)。
 
@@ -76,15 +76,12 @@ ASCII 栏便于读指令；时间戳取自 MCU 接收中断。掉线或背压导
 `ROBOT_UPPER_MAX_YAW_DEG_S`（初值 90 °/s）。
 轮半径 0.075 m。车体角速度是运动学指令，实际值还受轮胎打滑等影响。
 
-**正式版一夹爪。** CH3 从 −660 到 +660 线性映射实测开端 P2180 到闭合端 P1600。中位对应 P1890，
-进入下档后从当前实测位置限速向杆位目标移动，退出下档时保持最后发送的位置。
+**众灵夹爪 005（`RobotControl` / `RobotControlTelemetry`）。** CH3 从 −660 到 +660
+线性映射 P750～P1500，中位为 P1125。两端由 `ROBOT_GRIPPER_OPEN_P`、
+`ROBOT_GRIPPER_CLOSED_P` 配置，并作为 005 的位置软限位。接管时要先读到范围内的位置。
 
-**众灵夹爪预设。** 上电第一次有效位置回读作为零闭合基准。下档接管后的目标为
-`P_boot + abs(CH3)/660 × (P_closed − P_boot)`。离开下档时保留已发送的位置目标和扭矩，
-其他档忽略 CH3。再次进入下档要从当前杆位经过上次保持的闭合比例才能接管，正负两侧都有效。
-首次进入时基准为 0%；已在零位则下一次拨动即可操作。肩、肘和腕滚转采用回中保持的增量控制。
-当前 `ROBOT_GRIPPER_CLOSED_P=2500` 取自设备表中的协议上限，方向及端点待实测。在拆开夹爪联动
-或确认机械行程后写入实测闭合值。仅凭协议上限无法判断实物是否已经闭合。CH9 上下档、各轴机械正向也需上板核对。
+**U25-M 夹爪。** `RobotControlFashionStar` 使用 P2180 到 P1600，中位为 P1890。
+两种夹爪进入下档时都从实测位置限速移向当前杆位的目标，退出下档时保持最后发送的位置。
 
 整机专项测试入口为 `tests/run_robot_link_tests.py`、`tests/run_robot_motion_tests.py`；
 底盘 0x200 帧及 LED/蜂鸣时序集成回归在 `tests/run_motor_debug_tests.py` 中执行。

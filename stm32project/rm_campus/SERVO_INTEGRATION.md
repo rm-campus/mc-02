@@ -36,7 +36,7 @@ UART7 固定 115200/8N1。先确认两台的有效电压交集、线序和信号
 
 ## 用 U25-M 替换夹爪 005
 
-`RobotControlFashionStar` 是当前正式版一预设，保留整机遥控和 USB 波形。U25-M 的总线地址为
+`RobotControlFashionStar` 是 U25-M 夹爪预设，保留整机遥控和 USB 波形。U25-M 的总线地址为
 005，与众灵舵机共用 115200/8N1 的 UART7。CH9 中档由右杆左右控制腕滚转 004，下档由
 右杆上下（CH3）控制夹爪 005。
 
@@ -75,6 +75,7 @@ App/Inc/servo_config.h：SERVO_BUS_ENABLE=1，SERVO_USB_DEBUG_ENABLE=1。前者�
 后者只控制手动 USB 命令，不影响应用层 API。ServoBusTask 复用现有 AboveNormal、512 words 栈，没有增加任务。
 
 SERVO_DEVICE_TABLE 默认：001=ZP30、002=ZP35、003=ZP45、004/005=两台 ZP25S。
+众灵整机预设将 005 的软件行程设为 P750～P1500。CH9 下档用 CH3 线性控制，回中目标为 P1125。
 先逐台连接并配置唯一 ID，再并到同一总线。出厂 ID 通常为 000，本程序不会自动给它们改 ID。
 未改号时 001～005 查询可能全部离线。不要使用参考例程中的 #255PID000! 广播改号。
 
