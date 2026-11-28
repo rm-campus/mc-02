@@ -14,6 +14,7 @@ size_t FsServo_BuildQuery(uint8_t *frame, size_t capacity, uint8_t id);
 size_t FsServo_BuildMove(uint8_t *frame, size_t capacity, uint8_t id, uint16_t pulse,
                          uint16_t time_ms, uint16_t power_mw);
 size_t FsServo_BuildHold(uint8_t *frame, size_t capacity, uint8_t id, uint16_t power_mw);
+bool FsServo_ParseAngle(const uint8_t frame[FS_SERVO_ANGLE_REPLY_SIZE], uint8_t id, int *angle_ddeg);
 bool FsServo_ParsePosition(const uint8_t frame[FS_SERVO_ANGLE_REPLY_SIZE], uint8_t id, uint16_t *pulse);
 
 #endif

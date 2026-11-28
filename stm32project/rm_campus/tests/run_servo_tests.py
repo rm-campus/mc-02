@@ -55,7 +55,7 @@ def main():
                 f'-DSERVO_STATUS_ONLY={monitor}',f'-DSERVO_JOG_TEST_ENABLE={jog}','-DSERVO_RX_TRACE_ENABLE=0',
                 '-I'+str(folder),'-I'+str(root/'App/Inc'),'-I'+str(root/'Bsp/Inc'),
                 *[str(root/s) for s in test_sources],'-lm','-o',str(exe)],check=True,timeout=30)
-            for case in (['motions','modes','faults','session','queue'] if jog else [None]):
+            for case in (['motions','timing','modes','faults','session','queue'] if jog else [None]):
                 subprocess.run([str(exe),*([case] if case else [])],check=True,timeout=20)
         exe=folder/'feedback.exe'
         subprocess.run([a.cc,'-std=c11','-O2','-Wall','-Wextra','-Werror','-DSERVO_STATUS_ONLY=1',

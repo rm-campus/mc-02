@@ -51,13 +51,21 @@ size_t FsServo_BuildHold(uint8_t *frame, size_t capacity, uint8_t id, uint16_t p
     return pack(frame, capacity, FS_STOP, payload, sizeof(payload));
 }
 
-bool FsServo_ParsePosition(const uint8_t frame[FS_SERVO_ANGLE_REPLY_SIZE], uint8_t id, uint16_t *pulse)
+bool FsServo_ParseAngle(const uint8_t frame[FS_SERVO_ANGLE_REPLY_SIZE], uint8_t id, int *angle_ddeg)
 {
     if (frame[0]!=0x05 || frame[1]!=0x1C || frame[2]!=FS_ANGLE || frame[3]!=3U ||
         frame[4]!=id || checksum(frame, FS_SERVO_ANGLE_REPLY_SIZE-1U)!=frame[7]) return false;
     const unsigned raw = (unsigned)frame[5] | ((unsigned)frame[6] << 8);
     const int angle = raw >= 32768U ? (int)raw - 65536 : (int)raw;
     if (angle < -1800 || angle > 1800) return false;
-    *pulse = FsServo_PulseFromAngle(angle);
+    *angle_ddeg=angle;
+    return true;
+}
+
+bool FsServo_ParsePosition(const uint8_t frame[FS_SERVO_ANGLE_REPLY_SIZE], uint8_t id, uint16_t *pulse)
+{
+    int angle;
+    if(!FsServo_ParseAngle(frame,id,&angle))return false;
+    *pulse=FsServo_PulseFromAngle(angle);
     return true;
 }

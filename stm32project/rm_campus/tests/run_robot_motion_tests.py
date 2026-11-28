@@ -20,18 +20,27 @@ with tempfile.TemporaryDirectory() as d:
                        "FreeRTOS.h": "#pragma once\n",
                        "task.h": "void test_enter(void);\nvoid test_exit(void);\n#define taskENTER_CRITICAL() test_enter()\n#define taskEXIT_CRITICAL() test_exit()\n"}.items():
         (directory/name).write_text(data, encoding="utf-8")
-    for geometry in ([], ["-DROBOT_TRACK_M=0.30f", "-DROBOT_WHEELBASE_M=0.40f"]):
+    for overrides in ([], ["-DROBOT_TRACK_M=0.30f", "-DROBOT_WHEELBASE_M=0.40f",
+                           "-DROBOT_JOINT_SPEED_SCALE=3.0f"]):
         exe = directory/"motion.exe"
         subprocess.run([args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-                        "-DROBOT_CONTROL_ENABLE=1", *geometry, "-I", str(directory), "-I", "App/Inc",
+                        "-DROBOT_CONTROL_ENABLE=1", *overrides, "-I", str(directory), "-I", "App/Inc",
                         "-I", "Bsp/Inc", *sources, "-lm", "-o", str(exe)], check=True,cwd=root)
         subprocess.run([str(exe)], check=True)
         subprocess.run([str(exe), "sparse"], check=True)
         subprocess.run([str(exe), "wrist-silence"], check=True)
         subprocess.run([str(exe), "joint-lead-limit"], check=True)
+        subprocess.run([str(exe), "joint-speed-limit"], check=True)
+        for case in ("automatic-metadata-window", "automatic-metadata-window-wrist-start",
+                     "neutral-frame", "first-stick-frame",
+                     "released-stick-frame", "gripper-center-frame", "second-axis-frame"):
+            subprocess.run([str(exe), case], check=True)
     subprocess.run([args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-DROBOT_CONTROL_ENABLE=1", "-DSERVO_FASHIONSTAR_GRIPPER=1",
                     "-I", str(directory), "-I", "App/Inc", "-I", "Bsp/Inc",
                     *sources, "-lm", "-o", str(exe)], check=True, cwd=root)
     subprocess.run([str(exe), "fashionstar"], check=True)
     subprocess.run([str(exe), "joint-lead-limit"], check=True)
+    for case in ("automatic-metadata-window", "neutral-frame", "first-stick-frame",
+                 "released-stick-frame", "second-axis-frame"):
+        subprocess.run([str(exe), case], check=True)

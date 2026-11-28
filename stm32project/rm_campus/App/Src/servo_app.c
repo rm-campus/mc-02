@@ -7,9 +7,11 @@
 #include "task.h"
 #include "cmsis_os2.h"
 #include <string.h>
+#if ROBOT_CONTROL_ENABLE
+#include "robot_control.h"
+#endif
 #if SERVO_FASHIONSTAR_GRIPPER
 #include "fs_servo.h"
-#include "robot_control.h"
 /* 实测众灵 ASCII 帧会使此 U25-M 漏掉后续数条请求。只用定向读角度重新同步。 */
 enum { FS_QUERY_REPLY_MS = 5, FS_QUERY_ATTEMPTS = 16, FS_BUS_GAP_MS = 6 };
 static bool fs_aligned, fs_repeat;
@@ -28,6 +30,12 @@ static Request queue[SERVO_QUEUE_SIZE], current;
 static uint16_t queued;
 static uint32_t sequence;
 static ServoSnapshot work, published;
+typedef struct {
+    uint16_t minimum, maximum, target, duration_ms;
+    uint32_t ends;
+    bool active, paused;
+} ServoTravel;
+static ServoTravel travel[SERVO_COUNT];
 static uint32_t next_poll[SERVO_COUNT], next_move[SERVO_COUNT], next_slot, deadline, guard, request_started;
 static uint8_t boot_phase[SERVO_COUNT], poll_slot;
 static uint32_t last_metadata_retry;
@@ -35,6 +43,9 @@ static unsigned metadata_cursor;
 static bool metadata_retry_current, refresh_after_retry;
 static Phase phase;
 static bool auto_request, hardware_ready;
+#if ROBOT_CONTROL_ENABLE
+static bool priority_yield_poll;
+#endif
 static char line[ZP_FRAME_MAX];
 static uint16_t line_length;
 static osThreadId_t thread;
@@ -67,6 +78,71 @@ static int slot_for(uint8_t id)
     return -1;
 }
 const ServoConfig *Servo_GetConfig(unsigned i) { return i<SERVO_COUNT ? &configs[i] : NULL; }
+
+static uint16_t move_time_max(unsigned slot)
+{
+    return fashionstar_slot(slot) ? UINT16_MAX : 9999U;
+}
+
+/* 众灵用 P，Fashion Star 用偏移后的 0.1° 编码（0～3600）。 */
+static uint16_t travel_position(unsigned slot,uint16_t position)
+{
+#if SERVO_FASHIONSTAR_GRIPPER
+    if(fashionstar_slot(slot))return (uint16_t)(FsServo_AngleFromPulse(position)+1800);
+#else
+    (void)slot;
+#endif
+    return position;
+}
+
+static unsigned travel_mdeg_per_unit(unsigned slot,const ServoState *s)
+{
+    if(fashionstar_slot(slot))return 100U;
+    /* 正式遥控允许缺少 PMOD，此时按较大的 270° 行程限速。 */
+    return s->mode_valid && (s->mode==3U || s->mode==4U) ? 90U : 135U;
+}
+
+static unsigned travel_distance(uint16_t start,uint16_t target)
+{
+    return target>=start ? target-start : start-target;
+}
+
+static uint32_t move_duration(unsigned slot,const ServoState *s,unsigned distance,uint16_t requested_ms)
+{
+    /* 毫度除以度/秒得到毫秒。向上取整，避免低估运动时间。 */
+    uint32_t mdeg=distance*travel_mdeg_per_unit(slot,s);
+    uint32_t ms=(mdeg+SERVO_MAX_SPEED_DEG_S-1U)/SERVO_MAX_SPEED_DEG_S;
+    if(ms==0U)ms=1U;
+    return ms>requested_ms ? ms : requested_ms;
+}
+
+static void extend_travel(ServoTravel *bounds,uint16_t position)
+{
+    if(position<bounds->minimum)bounds->minimum=position;
+    if(position>bounds->maximum)bounds->maximum=position;
+}
+
+static void observe_travel(unsigned slot,uint16_t position)
+{
+    ServoTravel *bounds=&travel[slot];
+    bounds->minimum=bounds->maximum=position;
+    if(!bounds->active || bounds->paused)return;
+    if(position==bounds->target || due(request_started,bounds->ends))bounds->active=false;
+    else extend_travel(bounds,bounds->target);
+}
+
+static bool limit_current_move(const ServoState *s)
+{
+    /* 未回读前舵机可能仍在上次运动的任一点，按较远端点计算。 */
+    const ServoTravel *bounds=&travel[current.slot];
+    uint16_t target=travel_position(current.slot,current.position);
+    unsigned from_min=travel_distance(bounds->minimum,target);
+    unsigned from_max=travel_distance(bounds->maximum,target);
+    uint32_t duration=move_duration(current.slot,s,from_min>from_max ? from_min : from_max,current.time_ms);
+    if(duration>move_time_max(current.slot))return false;
+    current.time_ms=(uint16_t)duration;
+    return true;
+}
 #if SERVO_JOG_TEST_ENABLE
 typedef enum { JOG_IDLE, JOG_CHECK_LINK, JOG_MODE, JOG_BASE, JOG_MOVE, JOG_VERIFY, JOG_COMPLETE } JogPhase;
 static struct {
@@ -215,7 +291,7 @@ static void finish_jog_request(ServoResult result,uint32_t now,const ZpReply *re
         break;
     }
     case JOG_MOVE:
-        jog.verify_after=now+SERVO_JOG_MOVE_MS;
+        jog.verify_after=now+current.time_ms;
         jog.expires=jog.verify_after+SERVO_JOG_SETTLE_TIMEOUT_MS;
         jog.phase=JOG_VERIFY;
         break;
@@ -380,7 +456,7 @@ static ServoResult validate_motion(ServoControlOwner owner,unsigned slot,uint16_
     if(!bus_slot_active(slot))return SERVO_DISABLED;
     if(motion_requires_reset() || mode_work.ticket)return SERVO_BUSY;
     if(!published.initialized)return SERVO_NOT_READY;
-    if(p<configs[slot].minimum || p>configs[slot].maximum || ms>9999U)return SERVO_RANGE;
+    if(p<configs[slot].minimum || p>configs[slot].maximum || ms>move_time_max(slot))return SERVO_RANGE;
     if(owner==SERVO_OWNER_NONE) {
         if(control_owner!=SERVO_OWNER_NONE)return SERVO_BUSY;
     } else if(!owner_valid(owner) || control_owner!=owner || !(control_claimed&(1U<<slot)) ||
@@ -389,6 +465,8 @@ static ServoResult validate_motion(ServoControlOwner owner,unsigned slot,uint16_
     const ServoState *s=&published.device[slot];
     if(!motion_position_ready(s,owner,now))return SERVO_OFFLINE;
     if(position_mode_required(owner) && (!s->mode_valid || s->mode<1U || s->mode>4U))return SERVO_BAD_MODE;
+    if(!fashionstar_slot(slot) && move_duration(slot,s,travel_distance(s->position,p),ms)>move_time_max(slot))
+        return SERVO_RANGE;
     return SERVO_QUEUED;
 }
 static int replace_index(unsigned slot,ServoControlOwner owner)
@@ -543,6 +621,7 @@ bool Servo_Init(void)
 #endif
     thread=osThreadGetId();
     memset(&work,0,sizeof(work)); work.enabled=SERVO_BUS_ENABLE!=0;
+    memset(travel,0,sizeof(travel));
     uint32_t now=HAL_GetTick();
     taskENTER_CRITICAL();queued=0;sequence=0;control_owner=SERVO_OWNER_NONE;control_claimed=0;
     memset(control_stops,0,sizeof(control_stops));memset(control_inhibited,0,sizeof(control_inhibited));
@@ -552,6 +631,9 @@ bool Servo_Init(void)
     ServoRc_Init(now);
     Arm_Init(now);
     phase=IDLE; line_length=0; poll_slot=0; next_slot=guard=now;
+#if ROBOT_CONTROL_ENABLE
+    priority_yield_poll=false;
+#endif
 #if SERVO_FASHIONSTAR_GRIPPER
     fs_aligned=fs_repeat=false; fs_attempts=0U;
 #endif
@@ -635,6 +717,16 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
     }
     if(result==SERVO_OK) {
         if(current.op==ZP_MOVE)s->target=current.position;
+        ServoTravel *bounds=&travel[current.slot];
+        if(current.op==ZP_STOP || current.op==ZP_TORQUE_OFF)bounds->active=false;
+        if(current.op==ZP_PAUSE)bounds->paused=true;
+        if(current.op==ZP_RESUME && bounds->paused) {
+            bounds->paused=false;
+            if(bounds->active) {
+                extend_travel(bounds,bounds->target);
+                bounds->ends=now+bounds->duration_ms;
+            }
+        }
         if(reply) {
             ++s->replies;
             switch(reply->type) {
@@ -647,6 +739,7 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
                 /* Recheck metadata after an offline device reappears. No stale moves are replayed. */
                 if(s->position_seen && !s->online)boot_phase[current.slot]=0;
                 s->position=reply->value; s->position_ms=now; s->position_seen=true; s->online=true; s->failures=0;
+                if(!fashionstar_slot(current.slot))observe_travel(current.slot,reply->value);
                 break;
             default: break;
             }
@@ -693,7 +786,10 @@ static void input_byte(uint8_t c,uint32_t now)
         if (line_length==FS_SERVO_ANGLE_REPLY_SIZE) {
             ServoState *state=&work.device[current.slot];
             ZpReply position={.type=ZP_REPLY_POSITION, .id=state->id};
-            if (FsServo_ParsePosition((const uint8_t *)line,state->id,&position.value)) {
+            int angle;
+            if (FsServo_ParseAngle((const uint8_t *)line,state->id,&angle)) {
+                position.value=FsServo_PulseFromAngle(angle);
+                observe_travel(current.slot,(uint16_t)(angle+1800));
                 state->id_seen=true;
                 finish(SERVO_OK,now,&position);
             } else {
@@ -751,11 +847,23 @@ static bool take_metadata_retry(uint32_t now,uint32_t oldest_age)
     return false;
 }
 
+#if ROBOT_CONTROL_ENABLE
+static bool arm_gear(RobotMode mode)
+{
+    return mode==ROBOT_ARM || mode==ROBOT_WRIST;
+}
+#endif
+
 static bool take_poll(uint32_t now,bool positions_only)
 {
     if(!due(now,next_slot))return false;
-#if FS_GRIPPER_BENCH_ISOLATION
+#if ROBOT_CONTROL_ENABLE
     const RobotMode robot_mode=RobotControl_Get(now).mode;
+    const bool defer_metadata=arm_gear(robot_mode);
+#else
+    const bool defer_metadata=false;
+#endif
+#if FS_GRIPPER_BENCH_ISOLATION
     if (robot_mode==ROBOT_WAIT || robot_mode==ROBOT_WRIST) {
         const int grip=slot_for(5U);
         if (grip<0 || !due(now,next_poll[grip])) return false;
@@ -781,7 +889,7 @@ static bool take_poll(uint32_t now,bool positions_only)
         return true;
     }
     refresh_after_retry=false;
-    if(!positions_only && take_metadata_retry(now,oldest_age))return true;
+    if(!defer_metadata && !positions_only && take_metadata_retry(now,oldest_age))return true;
     for(unsigned n=0;n<SERVO_COUNT;++n) {
         unsigned i=poll_slot; poll_slot=(uint8_t)((poll_slot+1U)%SERVO_COUNT);
         if(!bus_slot_active(i))continue;
@@ -793,7 +901,9 @@ static bool take_poll(uint32_t now,bool positions_only)
         next_slot=now+SERVO_POLL_SLOT_MS;
         const ZpOperation ops[]={ZP_ID,ZP_VERSION,ZP_MODE,ZP_POSITION};
         ZpOperation op=ops[boot_phase[i]];
-        if(fashionstar_slot(i) || (SERVO_FASHIONSTAR_GRIPPER && !work.device[i].online) || positions_only ||
+        /* 控制档内将启动序列中的 PVER/PMOD 换成位置查询，保留阶段供退出后继续。 */
+        if((defer_metadata && (op==ZP_VERSION || op==ZP_MODE)) ||
+           fashionstar_slot(i) || (SERVO_FASHIONSTAR_GRIPPER && !work.device[i].online) || positions_only ||
            (work.device[i].position_seen &&
            (uint32_t)(now-work.device[i].position_ms)>=SERVO_POSITION_STALE_MS/2U))
             op=ZP_POSITION;
@@ -819,6 +929,20 @@ static bool take_mode_request(uint32_t now)
     mode_current=mode_yield_poll=true;
     return true;
 }
+
+/* 调用者持有队列临界区。FS 回读完成前保留目标供摇杆合并或切档撤销。 */
+static void take_queued(unsigned index)
+{
+    current=queue[index];
+#if SERVO_FASHIONSTAR_GRIPPER
+    if (current.op==ZP_MOVE && fashionstar_slot(current.slot) && !fs_aligned) {
+        current=(Request){.slot=current.slot,.op=ZP_POSITION};auto_request=true;
+        return;
+    }
+#endif
+    remove_at(index);auto_request=false;
+}
+
 static bool take_request(uint32_t now,bool positions_only)
 {
 #if SERVO_FASHIONSTAR_GRIPPER
@@ -851,28 +975,34 @@ static bool take_request(uint32_t now,bool positions_only)
     if (fs_aligned) for (unsigned i=0;i<queued;++i) {
         if (queue[i].op!=ZP_MOVE || !fashionstar_slot(queue[i].slot) || !due(now,next_move[queue[i].slot]))
             continue;
-        current=queue[i];remove_at(i);auto_request=false;
+        take_queued(i);
+        taskEXIT_CRITICAL();return true;
+    }
+#endif
+#if ROBOT_CONTROL_ENABLE
+    /* 快速重复拨杆最多插入一条优先事务，随后让正常轮询先运行。 */
+    if (!priority_yield_poll) for (unsigned i=0;i<queued;++i) {
+        const Request *r=&queue[i];
+        if (r->op!=ZP_MOVE || r->owner!=SERVO_OWNER_RC || !due(now,next_move[r->slot]) ||
+            !RobotServo_PriorityMove(r->slot,r->ticket,now)) continue;
+        take_queued(i);priority_yield_poll=true;
         taskEXIT_CRITICAL();return true;
     }
 #endif
     taskEXIT_CRITICAL();
-    /* 在线位置轮询维持优先级。推杆期间延后可能阻塞总线的离线重试和模式/版本查询。 */
-    if(mode_yield_poll && take_poll(now,positions_only)) { mode_yield_poll=false; return true; }
-    if(take_mode_request(now))return true;
-    if(take_poll(now,positions_only)) { mode_yield_poll=false; return true; }
+    /* 显式模式事务按原顺序与正常轮询交替。常规反馈仍优先于持续运动帧。 */
+    if(!mode_yield_poll && take_mode_request(now))return true;
+    if(take_poll(now,positions_only)) {
+        mode_yield_poll=false;
+#if ROBOT_CONTROL_ENABLE
+        priority_yield_poll=false;
+#endif
+        return true;
+    }
+    if(mode_yield_poll && take_mode_request(now))return true;
     taskENTER_CRITICAL();
     for(unsigned i=0;i<queued;++i)if(queue[i].op!=ZP_MOVE || due(now,next_move[queue[i].slot])) { take=(int)i;break; }
-    if(take>=0) {
-        current=queue[take];
-#if SERVO_FASHIONSTAR_GRIPPER
-        if (current.op==ZP_MOVE && fashionstar_slot(current.slot) && !fs_aligned) {
-            /* 等回包时保留队列中的目标，继续允许摇杆合并或切档撤销。 */
-            current=(Request){.slot=current.slot,.op=ZP_POSITION};auto_request=true;
-            taskEXIT_CRITICAL();return true;
-        }
-#endif
-        remove_at((unsigned)take);auto_request=false;
-    }
+    if(take>=0)take_queued((unsigned)take);
     taskEXIT_CRITICAL();
     return take>=0;
 }
@@ -983,6 +1113,7 @@ void Servo_Process(uint32_t now)
 #if SERVO_JOG_TEST_ENABLE
             else if(current.op==ZP_MOVE && s->mode!=jog.mode)finish(SERVO_BAD_MODE,now,NULL);
 #endif
+            else if(current.op==ZP_MOVE && !limit_current_move(s))finish(SERVO_RANGE,now,NULL);
             else {
                 char frame[ZP_FRAME_MAX];
                 size_t n;
@@ -1002,6 +1133,14 @@ void Servo_Process(uint32_t now)
                 line_length=0;
 #if ROBOT_CONTROL_ENABLE
                 taskENTER_CRITICAL();
+                /* 从选中查询到切换 UART 发送方向之间，RcTask 可能刚好切入机械臂档。 */
+                if(auto_request && (current.op==ZP_MODE || current.op==ZP_VERSION) &&
+                   arm_gear(RobotControl_Get(HAL_GetTick()).mode)) {
+                    metadata_retry_current=false;
+                    taskEXIT_CRITICAL();
+                    publish(now);
+                    return;
+                }
                 bool obsolete = current.op==ZP_MOVE && current.owner==SERVO_OWNER_RC &&
                     !RobotServo_CanTransmit(s->id, HAL_GetTick());
                 bool sent = !obsolete && n && ServoUart_Send(frame,(uint16_t)n);
@@ -1033,7 +1172,19 @@ void Servo_Process(uint32_t now)
                     if (!fashionstar_slot(current.slot)) fs_aligned=false;
 #endif
                     phase=TX; deadline=now+SERVO_TX_TIMEOUT_MS;
-                    if(current.op==ZP_MOVE)next_move[current.slot]=now+SERVO_MOVE_INTERVAL_MS;
+                    if(current.op==ZP_MOVE) {
+#if ROBOT_CONTROL_ENABLE
+                        if(current.owner==SERVO_OWNER_RC)RobotServo_MoveSent(current.slot,current.ticket);
+#endif
+                        ServoTravel *bounds=&travel[current.slot];
+                        bounds->target=travel_position(current.slot,current.position);
+                        extend_travel(bounds,bounds->target);
+                        bounds->duration_ms=current.time_ms;
+                        bounds->ends=deadline+current.time_ms;
+                        bounds->active=true;
+                        bounds->paused=false;
+                        next_move[current.slot]=now+SERVO_MOVE_INTERVAL_MS;
+                    }
                     if(current.ticket) { s->last_ticket=current.ticket; s->last_result=SERVO_QUEUED; }
                 }
             }

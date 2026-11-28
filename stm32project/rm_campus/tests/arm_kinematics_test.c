@@ -8,7 +8,7 @@
 static ArmKinConfig defaults(void)
 {
     return (ArmKinConfig){.l1_m=0.175965097f,.l2_m=0.111162186f,.damping=0.005f,
-        .max_linear_m_s=0.05f,.joint_limit_rad_s={0.523598776f,0.523598776f,0.523598776f,0.523598776f},
+        .max_linear_m_s=0.05f,.joint_limit_rad_s={0.261799388f,0.261799388f,0.261799388f,0.261799388f},
         .linear_tolerance_m_s=0.0001f,.angular_tolerance_rad_s=0.001f};
 }
 

@@ -81,16 +81,16 @@ SERVO_TEST QUEUED id=001 ticket=1
 SERVO_TEST DONE id=001 ticket=1 start=1868 target=1942 actual=1942
 ```
 
-QUEUED 表示已受理。默认运动 500 ms，计划运动时间届满后，新的位置回读在目标约 1° 内才报告 DONE。
+QUEUED 表示已受理。上例从静止起点移动 74 P，即 9.990°，按 15°/s 计算的最短运动时间为 666 ms。计划运动时间届满后，新的位置回读在目标约 1° 内才报告 DONE。
 从队首启动起有 2000 ms 准备窗口。已见过反馈但当前过期的舵机先读位置验通；
 模式未知再查询模式，确认模式后再读一次位置算起点。运动本身没有应答帧，发送完成后另计
-500 ms 运动时间和 1000 ms 到位验证窗口。队列中的等待时间独立计算。
+本次实际下发的运动时间和 1000 ms 到位验证窗口。队列中的等待时间独立计算。
 失败回复 `SERVO_TEST ERR` 和 `reason`：OFFLINE 表示缺少所需反馈，MODE_UNKNOWN 表示没有读到模式，
 BAD_MODE 表示模式不适合定位，LIMIT 表示整步越限，NOT_REACHED 表示有移动后回读但未按时到位。
 UART 错误或超时不会自动重发运动。结果中的 start、target、actual 是 P 值，0 表示无对应数据。
 BUSY 表示未受理；USB 回复队列满时可能以 `SERVO BUSY rejected=N; commands not enqueued` 汇总。
 固件检测到 USB 断线或会话变化时清除未发的点动，已经发到舵机的动作可能继续完成。
-点动开启/关闭、步长和时长在 `App/Inc/servo_config.h` 配置；`SERVO_JOG_TEST_ENABLE=0` 恢复仅接受 `servo_status`。
+点动开启/关闭、步长、最短时长（默认 500 ms）和公共速度上限在 `App/Inc/servo_config.h` 配置；`SERVO_JOG_TEST_ENABLE=0` 恢复仅接受 `servo_status`。
 下列遥控、Flash、电机和通用舵机运动命令属于其他固件配置。
 
 
@@ -166,7 +166,7 @@ SERVO_BUS_ENABLE=1、SERVO_USB_DEBUG_ENABLE=1，Flash 开关关闭时也可使�
 |---|---|
 | servo_status | 查询五台在线、P 位置值/年龄、模式/版本、限位、最近 ticket/result 和总线错误 |
 | servo_read 001 | 提交位置查询，随后用 servo_status 查看结果 |
-| servo_move 001 1500 1000 | ID1 运动到 P1500，时间 1000 ms；要求在线、模式 1～4、通过该轴位置限位 |
+| servo_move 001 1500 1000 | ID1 运动到 P1500，请求时长 1000 ms；固件按 15°/s 延长过短的时长。要求在线、模式 1～4、通过该轴位置限位 |
 | servo_stop 001 | 终止该轴动作 |
 | servo_pause 001 / servo_resume 001 | 暂停 / 继续 |
 | servo_torque 001 0 / servo_torque 001 1 | 释放 / 恢复扭力，需显式调用 |

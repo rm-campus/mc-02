@@ -14,6 +14,7 @@ typedef struct {
     uint8_t expected_mode; /* 模式改变会改变比例或方向，不能复用旧标定。 */
 } JointCalibration;
 static const JointCalibration calibration[5]={ARM_JOINT_CALIBRATION_TABLE};
+static const float servo_speed_limit_rad_s=ARM_DEG_TO_RAD(SERVO_MAX_SPEED_DEG_S);
 typedef struct {
     ArmVelocityCommand command;
     uint32_t time_ms, sequence;
@@ -115,8 +116,7 @@ void Arm_Init(uint32_t now)
         .max_linear_m_s=ARM_MAX_LINEAR_SPEED_MM_S*0.001f,
         .linear_tolerance_m_s=ARM_LINEAR_RESIDUAL_MM_S*0.001f,
         .angular_tolerance_rad_s=ARM_DEG_TO_RAD(ARM_ANGULAR_RESIDUAL_DEG_S)};
-    config_valid=isfinite(SERVO_MAX_SPEED_DEG_S) && SERVO_MAX_SPEED_DEG_S>0 &&
-        isfinite(kinematics.max_linear_m_s) && kinematics.max_linear_m_s>0 &&
+    config_valid=isfinite(kinematics.max_linear_m_s) && kinematics.max_linear_m_s>0 &&
         isfinite(ARM_MAX_TRACKING_ERROR_DEG) && ARM_MAX_TRACKING_ERROR_DEG>0 &&
         ARM_COMMAND_TIMEOUT_MS>0 && ARM_FEEDBACK_TIMEOUT_MS>0 && ARM_ERROR_PERIOD_MS>0 &&
         ARM_PERIOD_MS>0 && ARM_PERIOD_MS<=ARM_MAX_PERIOD_MS;
@@ -131,7 +131,7 @@ void Arm_Init(uint32_t now)
         if(c->reference_p<500 || c->reference_p>2500 || !isfinite(c->reference_rad) ||
             !isfinite(c->minimum_rad) || !isfinite(c->maximum_rad) || c->minimum_rad>=c->maximum_rad ||
             c->expected_mode<1U || c->expected_mode>4U)calibrated=false;
-        if(i<4)kinematics.joint_limit_rad_s[i]=ARM_DEG_TO_RAD(SERVO_MAX_SPEED_DEG_S)/c->ratio;
+        if(i<4)kinematics.joint_limit_rad_s[i]=servo_speed_limit_rad_s/c->ratio;
     }
     const float zero[4]={0};ArmKinSolution check;
     if(ArmKin_SolveVelocity(&kinematics,zero,zero,&check)!=ARM_KIN_OK)config_valid=false;
@@ -242,7 +242,7 @@ void Arm_Process(uint32_t now)
     if(!isfinite(speed) || speed>kinematics.max_linear_m_s) {
         fault(ARM_ERROR_LINEAR_SPEED_LIMIT,0,speed*1000.0f,ARM_MAX_LINEAR_SPEED_MM_S);publish(now);return;
     }
-    if(fabsf(m.command.gripper_rad_s)>ARM_DEG_TO_RAD(SERVO_MAX_SPEED_DEG_S)) {
+    if(fabsf(m.command.gripper_rad_s)>servo_speed_limit_rad_s) {
         fault(ARM_ERROR_JOINT_SPEED_LIMIT,5,ARM_RAD_TO_DEG(fabsf(m.command.gripper_rad_s)),SERVO_MAX_SPEED_DEG_S);publish(now);return;
     }
     for(unsigned i=0;i<5;++i)if(fabsf(status.target_rad[i]-status.q_rad[i])>ARM_DEG_TO_RAD(ARM_MAX_TRACKING_ERROR_DEG)) {
@@ -285,7 +285,7 @@ void Arm_Process(uint32_t now)
         }
         /* 量化后的P指令也设置运动时间下限；依据最近回读位置，不能据此保证实际瞬时转速。 */
         float delta=fabsf((float)positions[i]-feedback.device[slots[i]].position)*rad_per_p(modes[i]);
-        float ms=ceilf(delta/ARM_DEG_TO_RAD(SERVO_MAX_SPEED_DEG_S)*1000.0f);
+        float ms=ceilf(delta/servo_speed_limit_rad_s*1000.0f);
         if(!isfinite(ms) || ms>9999.0f) { fault(ARM_ERROR_TRACKING,i+1U,ARM_RAD_TO_DEG(delta),ARM_MAX_TRACKING_ERROR_DEG);publish(now);return; }
         times[i]=(uint16_t)(ms<ARM_PERIOD_MS ? ARM_PERIOD_MS : ms);
     }

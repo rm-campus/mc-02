@@ -38,9 +38,9 @@
 #define ROBOT_LINK_TIMEOUT_MS 100U
 #define ROBOT_SWITCH_STABLE_MS 30U
 
-/* 整机肩、肘与腕轴的速度倍率。舵机表的默认 30°/s 经此提高至 90°/s。 */
+/* 整机肩、肘与腕轴的目标速度倍率，换算后仍受 SERVO_MAX_SPEED_DEG_S 限制。 */
 #ifndef ROBOT_JOINT_SPEED_SCALE
-#define ROBOT_JOINT_SPEED_SCALE 3.0f
+#define ROBOT_JOINT_SPEED_SCALE 1.0f
 #endif
 /* 003 肩关节、004 腕滚转的目标最多比最新实测位置领先或落后 300 P。 */
 #define ROBOT_SHOULDER_WRIST_MAX_LEAD_P 300

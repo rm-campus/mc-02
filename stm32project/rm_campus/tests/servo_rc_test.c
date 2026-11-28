@@ -40,14 +40,17 @@ int main(void)
     assert(control().armed_mask==7);
     assert(Servo_MovePulse(1,2000,100,NULL)==SERVO_BUSY);
     receiver.rocker_l_v=660;receiver.rocker_l_h=-660;receiver.rocker_r_h=330;run(500);
-    assert(positions[0]>1580 && positions[1]<1420 && positions[2]>1530);
+    assert(positions[0]>=1552 && positions[0]<=1557);
+    assert(positions[1]>=1443 && positions[1]<=1448);
+    assert(positions[2]>=1523 && positions[2]<=1526);
     assert(positions[3]==1500 && positions[4]==1500);
     center();run(80);uint16_t held=positions[0];run(300);assert(positions[0]==held);
     /* Switching with a held stick stops the old group and waits for the new axes. */
     receiver.switch_c=-1;receiver.rocker_l_v=660;run(500);assert(!control().armed_mask);
     assert(positions[0]==held && positions[3]==1500);center();run(400);assert(control().armed_mask==24);
     receiver.rocker_l_v=660;receiver.rocker_l_h=-660;receiver.rocker_r_h=660;run(500);
-    assert(positions[3]>1580 && positions[4]<1420 && positions[0]==held);
+    assert(positions[3]>=1552 && positions[3]<=1557);
+    assert(positions[4]>=1443 && positions[4]<=1448 && positions[0]==held);
     /* Manual halt must latch, including removal of pending RC moves. */
     assert(Servo_Pause(4,NULL)==SERVO_QUEUED);run(80);held=positions[3];run(400);
     assert(positions[3]==held && (control().fault_mask&8) && (control().armed_mask&16));
@@ -77,8 +80,8 @@ int main(void)
     receiver.rocker_l_v=660;freeze_rc=true;run(101);assert(!control().armed_mask && !control().off_seen);
     freeze_rc=false;run(400);assert(!control().armed_mask);rearm(0);assert(control().armed_mask==7);
     /* Maximum travel clamp and fractional accumulation for very small deflections. */
-    receiver.rocker_l_v=660;run(7000);assert(positions[0]==2500);
-    receiver.rocker_l_v=-660;run(11000);assert(positions[0]==500);
+    receiver.rocker_l_v=660;run(9500);assert(positions[0]==2500);
+    receiver.rocker_l_v=-660;run(18500);assert(positions[0]==500);
     receiver.rocker_l_v=61;run(4000);assert(positions[0]>=501 && positions[0]<=502);
     center();run(100);
     for(unsigned id=1;id<=5;++id)assert(state((uint8_t)id).online);

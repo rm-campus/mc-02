@@ -126,7 +126,8 @@ void ServoRc_Process(uint32_t now)
         if(!usable || s.mode!=modes[i]) { fault(i);continue; }
         if(!update)continue;
         float span=s.mode<=2U ? 270.0f : 180.0f;
-        float p=state.target_p[i]+fraction(input[i])*(float)axes[i].direction*axes[i].speed_deg_s*
+        float speed=fminf(SERVO_MAX_SPEED_DEG_S,axes[i].speed_deg_s);
+        float p=state.target_p[i]+fraction(input[i])*(float)axes[i].direction*speed*
             ((float)elapsed*0.001f)*(2000.0f/span);
         if(p<c->minimum)p=(float)c->minimum;
         if(p>c->maximum)p=(float)c->maximum;

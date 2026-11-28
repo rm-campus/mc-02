@@ -1,6 +1,8 @@
 /* 复用确定性 UART7 从机、软中断和时钟，对实际应用/打包代码执行按毫秒的测试。 */
 #define main legacy_servo_main
+#define HAL_UART_Transmit_IT fixture_uart_transmit
 #include "servo_test.c"
+#undef HAL_UART_Transmit_IT
 #undef main
 #include "robot_control.h"
 #include "mecanum.h"
@@ -10,6 +12,30 @@
 
 static Fxi6x_Data rc = {.valid=true, .received=true};
 static unsigned grip_stops;
+
+typedef struct {
+    uint32_t started;
+    RobotMode mode;
+    char frame[sizeof(tx)];
+} WireFrame;
+
+static WireFrame wire[1024];
+static unsigned wire_count;
+static bool record_wire;
+
+int HAL_UART_Transmit_IT(UART_HandleTypeDef *h, const uint8_t *p, uint16_t n)
+{
+    int result=fixture_uart_transmit(h,p,n);
+    if (record_wire && result==HAL_OK) {
+        assert(wire_count<sizeof(wire)/sizeof(wire[0]));
+        WireFrame *entry=&wire[wire_count++];
+        entry->started=tick;
+        entry->mode=RobotControl_Get(tick).mode;
+        memcpy(entry->frame,p,n);
+        entry->frame[n]='\0';
+    }
+    return result;
+}
 
 static void wrist_silence(void)
 {
@@ -35,15 +61,176 @@ static void wrist_silence(void)
     assert(Servo_MovePulse(3,2056,20,NULL)==SERVO_RANGE);
     puts("PASS: no 001 query/motion/stop/torque/mode frames; shoulder rejects targets outside P945..P2055");
 }
+static void publish_rc_frame(void)
+{
+    rc.last_valid_ms=tick;
+    ++rc.frame_count;
+    Fxi6x_OnFrame(&rc);
+}
+
 static void operate(unsigned duration)
 {
     for (unsigned i=0; i<duration; ++i) {
-        if (tick%10U==0) {
-            rc.last_valid_ms=tick; ++rc.frame_count; Fxi6x_OnFrame(&rc);
-        }
+        if (tick%10U==0) publish_rc_frame();
         if(tx_pending && strcmp(tx,"#005PDST!")==0) ++grip_stops;
         run(1);
     }
+}
+
+static void confirm_initial_gear(int gear, RobotMode mode)
+{
+    rc.switch_c=gear;
+    for (unsigned elapsed=0; elapsed<=ROBOT_LINK_MIN_MS+ROBOT_SWITCH_STABLE_MS; elapsed+=10U) {
+        publish_rc_frame();
+        if (RobotControl_Get(tick).mode==mode) return;
+        tick+=10U;
+    }
+    assert(false);
+}
+
+static unsigned metadata_frames(RobotMode mode, const char *command)
+{
+    unsigned count=0;
+    for (unsigned i=0; i<wire_count; ++i) {
+        const WireFrame *entry=&wire[i];
+        if (entry->mode==mode && entry->frame[0]=='#' && strcmp(entry->frame+4,command)==0)
+            ++count;
+    }
+    return count;
+}
+
+static void automatic_metadata_window(bool wrist_first)
+{
+    const RobotMode initial_mode=wrist_first ? ROBOT_WRIST : ROBOT_ARM;
+    const RobotMode later_mode=wrist_first ? ROBOT_ARM : ROBOT_WRIST;
+    confirm_initial_gear(wrist_first ? ROBOT_SWITCH_DOWN : ROBOT_SWITCH_MIDDLE,initial_mode);
+#if SERVO_FASHIONSTAR_GRIPPER
+    positions[4]=FsServo_PulseFromAngle(FS_GRIPPER_OPEN_DDEG+FS_GRIPPER_TRAVEL_DDEG/2);
+#else
+    positions[4]=(ROBOT_GRIPPER_OPEN_P+ROBOT_GRIPPER_CLOSED_P)/2U;
+#endif
+    mode_reply_mask&=~4U;
+    record_wire=true;
+    assert(Servo_Init());
+    operate(2U*SERVO_METADATA_RETRY_MS);
+    assert(state(3).online && !state(3).mode_valid && !state(3).version_valid && !moves);
+    assert(!metadata_frames(initial_mode,"PMOD!") && !metadata_frames(initial_mode,"PVER!"));
+#if !SERVO_FASHIONSTAR_GRIPPER
+    assert(metadata_frames(initial_mode,"PID!"));
+#endif
+
+    rc.switch_c=ROBOT_SWITCH_UP;
+    operate(2U*SERVO_METADATA_RETRY_MS);
+    assert(metadata_frames(ROBOT_DRIVE,"PMOD!") && metadata_frames(ROBOT_DRIVE,"PVER!"));
+    assert(state(3).version_valid && !state(3).mode_valid);
+
+    rc.switch_c=wrist_first ? ROBOT_SWITCH_MIDDLE : ROBOT_SWITCH_DOWN;
+    operate(2U*SERVO_METADATA_RETRY_MS);
+    assert(state(5).online && !moves);
+    assert(!metadata_frames(later_mode,"PMOD!") && !metadata_frames(later_mode,"PVER!"));
+    assert(!state(3).mode_valid);
+
+    mode_reply_mask|=4U;
+#if SERVO_FASHIONSTAR_GRIPPER
+    /* 混合隔离档在 WAIT 只轮询二进制夹爪，切回 DRIVE 后补读众灵。 */
+    rc.switch_c=ROBOT_SWITCH_UP;
+    operate(2U*SERVO_METADATA_RETRY_MS);
+#else
+    const unsigned wait_reads=metadata_frames(ROBOT_WAIT,"PMOD!");
+    run(2U*SERVO_METADATA_RETRY_MS);
+    assert(RobotControl_Get(tick).mode==ROBOT_WAIT);
+    assert(metadata_frames(ROBOT_WAIT,"PMOD!")>wait_reads);
+#endif
+    assert(state(3).mode_valid);
+    puts("PASS: automatic PMOD/PVER pause in centered ARM/WRIST; pending metadata resumes in permitted modes");
+}
+
+typedef enum { STICK_NEUTRAL, STICK_PUSH, STICK_RELEASED, STICK_GRIP_CENTER, STICK_SECOND_AXIS } StickCase;
+
+static void first_stick_frame(StickCase test)
+{
+    const bool grip=test==STICK_GRIP_CENTER;
+    const bool second_axis=test==STICK_SECOND_AXIS;
+    if (grip) {
+        rc.rocker_r_v=660;
+        positions[4]=ROBOT_GRIPPER_CLOSED_P;
+    }
+    confirm_initial_gear(grip ? ROBOT_SWITCH_DOWN : ROBOT_SWITCH_MIDDLE,
+                         grip ? ROBOT_WRIST : ROBOT_ARM);
+    assert(Servo_Init());
+    operate(500);
+    assert(state(2).online && state(3).online && state(4).online);
+    assert(!moves);
+    if (second_axis) {
+        rc.rocker_l_v=180;
+        operate(240);
+        assert(moves && positions[2]>1500U && positions[1]==1500U);
+    }
+
+    record_wire=true;
+    const unsigned missing_bit=second_axis ? 8U : 2U;
+    const char *missing_query=second_axis ? "#004PRAD!" : "#002PRAD!";
+    reply_mask&=~missing_bit;
+    unsigned last=0;
+    for (unsigned elapsed=0; elapsed<SERVO_POLL_PERIOD_MS+SERVO_POLL_SLOT_MS; ++elapsed) {
+        operate(1);
+        last=wire_count;
+        if (last && !strcmp(wire[last-1U].frame,missing_query)) break;
+    }
+    assert(last && !strcmp(wire[last-1U].frame,missing_query) && tx_pending);
+    assert(wire[last-1U].started==tick);
+
+    const uint32_t first_allowed=tx_due+SERVO_REPLY_TIMEOUT_MS+SERVO_RECOVERY_QUIET_MS;
+    if (grip) rc.rocker_r_v=0;
+    else if (second_axis) rc.rocker_l_h=660;
+    else if (test!=STICK_NEUTRAL) rc.rocker_l_v=660;
+    if (test==STICK_RELEASED) {
+        publish_rc_frame();
+        operate(SERVO_RC_PERIOD_MS+1U);
+        ServoSnapshot snapshot;
+        Servo_CopySnapshot(&snapshot);
+        assert(snapshot.queued && !moves);
+        rc.rocker_l_v=0;
+        publish_rc_frame();
+    }
+    while (tick+1U<first_allowed) operate(1);
+    assert(wire_count==last);
+    /* 003 的上次反馈已超过一轮，可和新动作争用恢复后的第一个发送机会。 */
+    assert(tick-state(3).position_ms>=SERVO_POLL_PERIOD_MS);
+    for (unsigned elapsed=0; wire_count==last && elapsed<5U; ++elapsed) operate(1);
+    assert(wire_count==last+1U && wire[last].started>=first_allowed);
+    printf("First frame at +%lu ms after %s starts: %s\n",
+           (unsigned long)(wire[last].started-wire[last-1U].started),missing_query,wire[last].frame);
+    fflush(stdout);
+    if (test==STICK_NEUTRAL || test==STICK_RELEASED) {
+        assert(!strcmp(wire[last].frame+4,"PRAD!"));
+        puts(test==STICK_RELEASED ? "PASS: releasing before TX revokes priority for a queued MOVE" :
+             "PASS: neutral control resumes automatic PRAD after the recovery guard");
+        return;
+    }
+
+    unsigned target, duration;
+    if (grip) {
+        assert(sscanf(wire[last].frame,"#005P%4uT%4u!",&target,&duration)==2);
+        assert(target<ROBOT_GRIPPER_CLOSED_P && target>ROBOT_GRIPPER_OPEN_P);
+        puts("PASS: returning CH3 toward center from its settled closed position gets first-MOVE priority");
+        return;
+    }
+    if (second_axis) {
+        assert(sscanf(wire[last].frame,"#002P%4uT%4u!",&target,&duration)==2 && target>1500U);
+        puts("PASS: a new CH4 input gets first-MOVE priority while CH2 remains held");
+        return;
+    }
+    assert(sscanf(wire[last].frame,"#003P%4uT%4u!",&target,&duration)==2 && target>1500U);
+    reply_mask|=missing_bit;
+    operate(150);
+    for (unsigned elapsed=0; elapsed<800U; ++elapsed) {
+        operate(1);
+        const ServoState shoulder=state(3);
+        assert(shoulder.online && tick-shoulder.position_ms<100U);
+    }
+    assert(positions[2]>1500U && moves>2U);
+    puts("PASS: first actual stick MOVE wins over due PRAD after the recovery guard; held stick retains feedback");
 }
 
 static void joint_lead_limit(void)
@@ -55,34 +242,57 @@ static void joint_lead_limit(void)
     assert(state(3).online && state(4).online);
 
     rc.rocker_l_v=660; rc.rocker_r_h=-660;
-    operate(1700);
+    operate(3000);
     assert(positions[2]==1500 && positions[3]==1500);
     assert(state(3).target==1800 && state(4).target==1200);
 
     rc.rocker_l_v=-660; rc.rocker_r_h=660;
     operate(120);
     assert(state(3).target<1800 && state(4).target>1200);
-    operate(1700);
+    operate(5500);
     assert(state(3).target==1200 && state(4).target==1800);
 
     positions[2]=1460; positions[3]=1540;
-    operate(250);
+    operate(500);
     assert(state(3).target==1160 && state(4).target==1840);
 
     reply_mask&=~motion_hold_mask;
     operate(1600);
     assert(!state(3).online && !state(4).online);
     rc.rocker_l_v=660; rc.rocker_r_h=-660;
-    operate(1600);
+    operate(5500);
     assert(state(3).target==1760 && state(4).target==1240);
     assert(Servo_RcStopPending()==0U);
 
     positions[2]=1500; positions[3]=1500;
     reply_mask|=motion_hold_mask;
-    operate(1600);
+    operate(2000);
     assert(state(3).online && state(4).online);
     assert(state(3).target==1800 && state(4).target==1200);
     puts("PASS: 003 and 004 clamp lead to 300 P, reverse without hidden accumulation, and use cached position during feedback loss");
+}
+
+static void joint_speed_limit(void)
+{
+    modes[1]=3;
+    modes[3]=4;
+    confirm_initial_gear(ROBOT_SWITCH_UP,ROBOT_DRIVE);
+    assert(Servo_Init());
+    operate(2400);
+    assert(state(2).mode_valid && state(2).mode==3);
+    assert(state(3).mode_valid && state(3).mode==1);
+    assert(state(4).mode_valid && state(4).mode==4);
+
+    rc.switch_c=ROBOT_SWITCH_MIDDLE;
+    operate(80);
+    rc.rocker_l_v=660; rc.rocker_l_h=-660; rc.rocker_r_h=660;
+    operate(1000);
+    /* One second at 15°/s is 111 P in 270° mode and 167 P in 180° mode. */
+    assert(abs((int)positions[2]-1611)<=5);
+    assert(abs((int)positions[1]-1333)<=6);
+    assert(abs((int)positions[3]-1667)<=6);
+    assert(positions[0]==1500 && positions[4]==1500);
+    puts("PASS: 002/003/004 respect 15 deg/s full-stick target rate in 180 and 270 degree modes");
 }
 
 static void wheels(void)
@@ -168,9 +378,9 @@ static void sparse_bus(void)
         }
         assert(state(3).online && tick-state(3).position_ms<100U);
     }
-    assert(max_gap<=25U);
-    /* Three seconds at quarter stick and 90°/s full scale, in 270° mode. */
-    assert(positions[2]-start>=495 && positions[2]-start<=505);
+    assert(max_gap<=45U);
+    /* Three seconds at quarter stick and 15°/s full scale, in 270° mode. */
+    assert(positions[2]-start>=81 && positions[2]-start<=85);
     printf("Sparse bus: max shoulder frame gap %lu ms, advance %u P in 3 s\n",
            (unsigned long)max_gap,(unsigned)(positions[2]-start));
     rc.rocker_l_v=0;
@@ -188,8 +398,7 @@ static void fashionstar_gripper(void)
     const uint16_t three_quarters=FsServo_PulseFromAngle(FS_GRIPPER_OPEN_DDEG+3*FS_GRIPPER_TRAVEL_DDEG/4);
     const uint16_t closed=FsServo_PulseFromAngle(FS_GRIPPER_OPEN_DDEG+FS_GRIPPER_TRAVEL_DDEG);
     assert(open==2180U && halfway==1890U && closed==1600U);
-    /* 夹爪以 30°/s 推进，另给协议切换和反馈一点余量。 */
-    const unsigned sweep_ms=(unsigned)abs(FS_GRIPPER_TRAVEL_DDEG)*1000U/300U;
+    const unsigned sweep_ms=(unsigned)abs(FS_GRIPPER_TRAVEL_DDEG)*100U/SERVO_MAX_SPEED_DEG_S;
     positions[4]=open;
     reply_mask=4U|8U|16U;
     fs_misses_after_zp=11;
@@ -199,7 +408,10 @@ static void fashionstar_gripper(void)
     operate(1600);
     assert(state(5).online && state(5).id_seen);
     assert(state(5).position==open && fs_queries>0 && fs_moves==0);
-    rc.rocker_r_v=0; operate(sweep_ms/2U+600U);
+    rc.rocker_r_v=0; operate(1000);
+    /* One second at 15°/s advances 83 P in the 360° representation. */
+    assert(abs((int)positions[4]-(open-83))<=5);
+    operate(sweep_ms/2U-400U);
     assert(positions[4]==halfway && state(5).target==halfway && fs_moves>0);
     rc.rocker_r_v=330; operate(sweep_ms/4U+600U);
     assert(positions[4]==three_quarters && state(5).target==three_quarters);
@@ -228,8 +440,40 @@ static void fashionstar_gripper(void)
 
 int main(int argc,char **argv)
 {
+    if (argc==2 && !strcmp(argv[1],"automatic-metadata-window")) {
+        automatic_metadata_window(false);
+        return 0;
+    }
+    if (argc==2 && !strcmp(argv[1],"automatic-metadata-window-wrist-start")) {
+        automatic_metadata_window(true);
+        return 0;
+    }
+    if (argc==2 && !strcmp(argv[1],"first-stick-frame")) {
+        first_stick_frame(STICK_PUSH);
+        return 0;
+    }
+    if (argc==2 && !strcmp(argv[1],"neutral-frame")) {
+        first_stick_frame(STICK_NEUTRAL);
+        return 0;
+    }
+    if (argc==2 && !strcmp(argv[1],"released-stick-frame")) {
+        first_stick_frame(STICK_RELEASED);
+        return 0;
+    }
+    if (argc==2 && !strcmp(argv[1],"gripper-center-frame")) {
+        first_stick_frame(STICK_GRIP_CENTER);
+        return 0;
+    }
+    if (argc==2 && !strcmp(argv[1],"second-axis-frame")) {
+        first_stick_frame(STICK_SECOND_AXIS);
+        return 0;
+    }
     if (argc==2 && !strcmp(argv[1],"joint-lead-limit")) {
         joint_lead_limit();
+        return 0;
+    }
+    if (argc==2 && !strcmp(argv[1],"joint-speed-limit")) {
+        joint_speed_limit();
         return 0;
     }
     if (argc==2 && !strcmp(argv[1],"wrist-silence")) {
@@ -254,23 +498,30 @@ int main(int argc,char **argv)
     assert(positions[4]==1500 && moves==0);
     assert(Servo_RcMovePulse(5,749,20,NULL)==SERVO_RANGE);
     assert(Servo_RcMovePulse(5,1501,20,NULL)==SERVO_RANGE);
-    rc.rocker_r_v=0;operate(2400);
+    rc.rocker_r_v=0;operate(1000);
+    assert(abs((int)positions[4]-1389)<=5);
+    operate(3200);
     assert(positions[4]==1125 && state(5).target==1125);
     /* 切档取消未发送的目标，夹爪保持最后到达的位置。 */
     assert(Servo_RcMovePulse(5,1300,20,NULL)==SERVO_QUEUED);
     rc.switch_c=ROBOT_SWITCH_UP;rc.last_valid_ms=tick;++rc.frame_count;Fxi6x_OnFrame(&rc);
     rc.rocker_r_v=-660;operate(300);
     assert(positions[4]==1125 && state(5).target==1125 && grip_stops==0);
-    rc.switch_c=ROBOT_SWITCH_DOWN;operate(2400);
+    rc.switch_c=ROBOT_SWITCH_DOWN;operate(4200);
     assert(positions[4]==750 && state(5).target==750);
-    rc.rocker_r_v=660;operate(4300);
+    rc.rocker_r_v=660;operate(7350);
     assert(positions[4]==1500 && state(5).target==1500);
     rc.rocker_l_v=1;rc.rocker_l_h=-1;operate(7000);
     assert(positions[0]==1500 && !state(1).online && positions[3]==1500 &&
            positions[1]==1500 && positions[2]==1500);
-    rc.switch_c=ROBOT_SWITCH_MIDDLE;rc.rocker_l_v=-300;rc.rocker_l_h=300;rc.rocker_r_h=-300;operate(750);
-    assert(positions[2]<1500 && positions[1]>1500 && positions[3]<1500 && positions[4]==1500 && !grip_stops);
+    rc.switch_c=ROBOT_SWITCH_UP;rc.rocker_l_v=0;rc.rocker_l_h=0;operate(300);
+    uint32_t mode_ticket;
+    assert(Servo_RequestModeProbe(3,&mode_ticket)==SERVO_QUEUED);
+    operate(2U*SERVO_MODE_PROBE_TIMEOUT_MS);
     assert(!state(2).mode_valid && state(3).mode_valid && state(3).mode==5);
+    rc.switch_c=ROBOT_SWITCH_MIDDLE;
+    rc.rocker_l_v=-300;rc.rocker_l_h=300;rc.rocker_r_h=-300;operate(750);
+    assert(positions[2]<1500 && positions[1]>1500 && positions[3]<1500 && positions[4]==1500 && !grip_stops);
     /* 运动发送失败且停止无应答。同档等新位置再自动接管，从新位置继续。 */
     rc.rocker_l_v=0; rc.rocker_l_h=0; rc.rocker_r_h=0; operate(100);
     uint16_t shoulder_before=positions[2];
@@ -289,9 +540,9 @@ int main(int argc,char **argv)
     for(unsigned elapsed=0;positions[2]==shoulder_recovery && elapsed<1500U;++elapsed) operate(1);
     assert(positions[2]>shoulder_recovery && positions[2]<shoulder_recovery+20U && Servo_RcInhibited()==0U);
     /* 在中档持续打满肩关节摇杆，分别验证上下限与反向退出。 */
-    rc.rocker_l_v=660; operate(7000);
+    rc.rocker_l_v=660; operate(11000);
     assert(positions[2]==2055 && state(3).target==2055);
-    rc.rocker_l_v=-660; operate(8000);
+    rc.rocker_l_v=-660; operate(11000);
     assert(positions[2]==945 && state(3).target==945);
     assert(!depth);
     puts("PASS: ZP 005 follows signed CH3 at P750/P1125/P1500 with range checks, gear cancellation, and same-gear recovery");

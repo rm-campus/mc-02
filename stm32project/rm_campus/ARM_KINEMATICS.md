@@ -1,6 +1,6 @@
 # 机械臂速度逆运动学预备模块
 
-更新：2026-11-18。本模块已接入构建和现有任务，但默认关闭，不读取遥杆/拨杆，不自动使能或回零。
+更新：2026-11-28。本模块已接入构建和现有任务，但默认关闭，不读取遥杆/拨杆，不自动使能或回零。
 此版本已通过主机测试和 ARM 编译。机械臂实板验证及 TCP 定义待完成。
 
 ## 控制对象和数学约定
@@ -30,14 +30,14 @@ L12+L23归一化，使用阻尼最小二乘和Cholesky解方程，不显式求�
 
 ## 宏与当前默认值
 
-所有应用参数集中在 App/Inc/arm_config.h。
+逆运动学参数集中在 App/Inc/arm_config.h。舵机输出轴限速由 App/Inc/servo_config.h 定义。
 
 | 配置 | 默认值 | 用途 |
 |---|---:|---|
 | ARM_VELOCITY_IK_ENABLE | 0 | 应用层控制和错误回传总开关；数学核心仍可独立调用/测试 |
 | ARM_VELOCITY_IK_OUTPUT_ENABLE | 0 | 是否允许实际调用舵机整组输出接口 |
 | ARM_JOINT_CALIBRATION_VALID | 0 | 是否已经完成下述五轴标定 |
-| SERVO_MAX_SPEED_DEG_S | 30 | 舵机输出轴的允许目标角速度，°/s |
+| SERVO_MAX_SPEED_DEG_S | 15 | 各舵机输出轴共用的指令限速，°/s |
 | ARM_MAX_LINEAR_SPEED_MM_S | 50 | 腕交点平移合速度上限，mm/s |
 | ARM_PERIOD_MS | 20 | 速度计算和位置目标更新周期 |
 | ARM_COMMAND_TIMEOUT_MS | 100 | 整组速度命令最大年龄，达到此值即停止 |
@@ -49,12 +49,11 @@ L12+L23归一化，使用阻尼最小二乘和Cholesky解方程，不显式求�
 | ARM_ANGULAR_RESIDUAL_DEG_S | 0.5 | 俯仰/滚转速度残差二范数容差 |
 | ARM_ERROR_PERIOD_MS | 200 | 故障重复报告周期，5 Hz |
 
-30°/s和50mm/s是初始软件允许值，不是对应舵机在7.4V下的硬件极限。
-arm_config.h 的末端速度参数旁已注明当前几何的计算公式：传动比1:1、每轴30°/s时，
-允许俯仰变化的跨姿态理论上界为(L12+2×L23)×(30π/180)×1000=208.544 mm/s；
-保持俯仰不变时为(L12+L23)×(30π/180)×1000=150.339 mm/s。
-这不是任意姿态/方向都可保证的速度，仍须逐周期检查关节限速、任务残差和限位。配置值保持50 mm/s。
-原 SERVO_RC_AXIS_TABLE 只控制CH9直接遥控；这里的速度上限不回写或覆盖原遥控配置。
+15°/s 和 50 mm/s 分别是舵机输出轴与腕交点的软件限速。当前几何下，关节传动比均为 1:1，
+允许俯仰变化时，跨姿态的平移速度理论上界为 (L12+2×L23)×(15π/180)×1000≈104.272 mm/s。
+保持俯仰不变时，上界为 (L12+L23)×(15π/180)×1000≈75.170 mm/s。
+理论上界仅在特定姿态和方向可达。腕交点的平移合速度仍独立限制为 50 mm/s，每周期同时检查关节限速、任务残差和限位。
+CH9 直接遥控和逆运动学共用同一舵机输出轴限速。
 没有持续运行时间限制。只要上层不断提供有效速度命令且反馈正常，可以持续运行。
 
 ## 关节映射与标定
@@ -147,7 +146,7 @@ ARM接管时拒绝手动Move/Resume/恢复扭矩；手动查询和Stop/Pause/释
 FAULT期间在USB可用且其它事务空闲时每200ms持续发送一行ASCII文本，例如：
 
 ```text
-ARM_ERROR code=JOINT_SPEED_LIMIT joint=3 servo_id=1 requested=57.291 limit=30.000 unit=deg_s linear_residual_mm_s=0.000 angular_residual_deg_s=0.003
+ARM_ERROR code=JOINT_SPEED_LIMIT joint=3 servo_id=1 requested=16.000 limit=15.000 unit=deg_s linear_residual_mm_s=0.000 angular_residual_deg_s=0.003
 ```
 
 joint=1～5表示肩到爪的逻辑顺序，servo_id是实际总线ID；joint=0表示整组错误。

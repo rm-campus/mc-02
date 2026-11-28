@@ -20,6 +20,7 @@ static bool uart_unavailable;
 static uint8_t *rx_byte;
 static char tx[65]; static uint32_t tx_due;
 static unsigned tx_count,moves,reply_mask=31;
+static unsigned last_move_ms;
 static unsigned mode_writes[5], mode_reply_mask=31, drop_first_mode_read;
 static unsigned mode_reads;
 static unsigned field_reply_mask; /* 这些模拟设备使用实物录到的两种回包。 */
@@ -100,11 +101,15 @@ static void fashionstar_step(const uint8_t *frame)
         return;
     }
     if (frame[2]==0x08) {
-        assert(frame[3]==7U && frame[7]==SERVO_RC_PERIOD_MS && frame[8]==0U);
+        assert(frame[3]==7U);
         assert(((unsigned)frame[9]|((unsigned)frame[10]<<8))==FS_GRIPPER_POWER_MW);
         const unsigned word=(unsigned)frame[5]|((unsigned)frame[6]<<8);
         const int angle=word>=32768U ? (int)word-65536 : (int)word;
         assert(angle>=-1800 && angle<=1800);
+        int distance=angle-FsServo_AngleFromPulse(positions[4]);
+        if(distance<0)distance=-distance;
+        last_move_ms=(unsigned)frame[7]|((unsigned)frame[8]<<8);
+        assert(last_move_ms>=SERVO_RC_PERIOD_MS && last_move_ms*SERVO_MAX_SPEED_DEG_S>=(unsigned)distance*100U);
         positions[4]=FsServo_PulseFromAngle(angle);
         ++fs_moves; ++moves;
     } else if (frame[2]==0x18) {
@@ -140,6 +145,7 @@ static void bus_step(void)
     unsigned id=0,p=0,ms=0; assert(sscanf(tx,"#%3u",&id)==1&&id>=1&&id<=5);
     if(sscanf(tx,"#%3uP%4uT%4u!",&id,&p,&ms)==3) {
         if (!(motion_hold_mask & (1U<<(id-1U)))) positions[id-1]=(uint16_t)p;
+        last_move_ms=ms;
         ++moves;
         return;
     }
@@ -241,6 +247,40 @@ static void protocol(void)
     assert(Zp_Matches(ZP_SET_MODE,1,&r)&&!Zp_Matches(ZP_SET_MODE,2,&r));
     assert(Zp_Parse("#OK!",4,&r)&&Zp_Matches(ZP_STOP,1,&r)&&!Zp_Matches(ZP_POSITION,1,&r));
 }
+
+static void speed_ceiling(void)
+{
+    positions[1]=1500;
+    run(100);
+    assert(state(2).position==1500);
+    const uint32_t sample_ms=state(2).position_ms;
+    const unsigned before=moves;
+    reply_mask&=~2U; /* Exercise a reversal before another position sample can arrive. */
+    motion_hold_mask|=2U;
+    usb.ready=true;
+    input("servo_move 002 1900 20\n");
+    for(unsigned i=0;i<100U && moves==before;++i)run(1);
+    assert(moves==before+1U && last_move_ms==3600U);
+    input("servo_move 002 1500 20\n");
+    for(unsigned i=0;i<100U && moves==before+1U;++i)run(1);
+    assert(moves==before+2U && last_move_ms==3600U && state(2).position_ms==sample_ms);
+
+    uint32_t ticket;
+    assert(Servo_MovePulse(2,700,20,&ticket)==SERVO_QUEUED);
+    for(unsigned i=0;i<100U && state(2).last_ticket!=ticket;++i)run(1);
+    /* Feedback alone fits the T field, but the far travel bound requires T10800. */
+    assert(state(2).last_ticket==ticket && state(2).last_result==SERVO_RANGE && moves==before+2U);
+
+    usb.ready=false;
+    reply_mask|=2U;
+    motion_hold_mask&=~2U;
+    run(1500);
+    assert(state(2).online && state(2).mode_valid);
+    assert(Servo_MovePulse(2,1500,9999U,&ticket)==SERVO_QUEUED);
+    for(unsigned i=0;i<100U && moves==before+2U;++i)run(1);
+    assert(moves==before+3U && last_move_ms==9999U);
+}
+
 int main(void)
 {
     protocol();assert(Servo_Init());uint32_t ticket;
@@ -286,6 +326,7 @@ int main(void)
     assert(Servo_MovePulse(1,1600,1000,&ticket)==SERVO_QUEUED);
     assert(Servo_MovePulse(1,1700,1000,&ticket)==SERVO_QUEUED);
     run(80);assert(moves==1&&state(1).position==1700&&state(1).last_result==SERVO_OK);
+    assert(last_move_ms==1800U); /* Coalesced target is 200 P from actual feedback. */
     assert(Servo_MovePulse(1,2000,1000,&ticket)==SERVO_QUEUED);
     assert(Servo_Stop(1,&ticket)==SERVO_QUEUED);run(80);assert(moves==1&&state(1).last_result==SERVO_OK);
     reply_mask&=~1U;run(600);assert(!state(1).online&&state(2).online);
@@ -335,6 +376,7 @@ int main(void)
         run(1);
         for(unsigned id=1;id<=5;++id)assert(state((uint8_t)id).online);
     }
+    speed_ceiling();
     modes[0]=5;assert(Servo_Init());run(600);
     assert(state(1).online&&Servo_MovePulse(1,1500,1000,&ticket)==SERVO_BAD_MODE);
     modes[0]=1;

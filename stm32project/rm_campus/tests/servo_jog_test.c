@@ -35,6 +35,28 @@ static void motions(void)
     run(120);assert(!output_len && moves==8);
 }
 
+static void timing(void)
+{
+    modes[1]=3U;
+    start_test();
+    input("servo_test_001_1\n");
+    for(unsigned i=0;i<100U && !moves;++i)run(1);
+    assert(moves==1U && last_move_ms==666U && positions[0]==1574U);
+    run(last_move_ms-1U);
+    assert(!strstr(output,"SERVO_TEST DONE"));
+    run(100);
+    assert(strstr(output,"SERVO_TEST DONE"));
+
+    clear_log();
+    input("servo_test_002_1\n");
+    for(unsigned i=0;i<100U && moves==1U;++i)run(1);
+    assert(moves==2U && last_move_ms==666U && positions[1]==1611U);
+    run(last_move_ms-1U);
+    assert(!strstr(output,"SERVO_TEST DONE"));
+    run(100);
+    assert(strstr(output,"SERVO_TEST DONE"));
+}
+
 static void modes_test(void)
 {
     mode_reply_mask=30U; modes[1]=5;
@@ -86,6 +108,7 @@ int main(int argc,char **argv)
 {
     assert(argc==2);
     if(!strcmp(argv[1],"motions"))motions();
+    else if(!strcmp(argv[1],"timing"))timing();
     else if(!strcmp(argv[1],"modes"))modes_test();
     else if(!strcmp(argv[1],"faults"))faults();
     else if(!strcmp(argv[1],"session"))session_test();

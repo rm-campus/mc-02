@@ -6,6 +6,7 @@
 #undef main
 #include "arm_velocity.h"
 #include "arm_usb.h"
+#include "arm_kinematics.h"
 #include <math.h>
 
 static bool motor_report_busy;
@@ -138,28 +139,49 @@ static void linear_limit(void)
     assert(s.requested>56.0f && s.limit==ARM_MAX_LINEAR_SPEED_MM_S && moves==before);
     verify_reset_only(&s);
 }
-static void joint_limit(void)
+static ArmVelocityCommand command_for_axis(unsigned axis,float speed_deg_s)
 {
-    start_arm();unsigned before=moves;
-    ArmVelocityCommand command={.pitch_rad_s=ARM_DEG_TO_RAD(45.0f)};drive(command,120);
-    ArmStatus s=arm_state();assert(s.state==ARM_FAULT && s.error==ARM_ERROR_JOINT_SPEED_LIMIT);
-    assert(s.joint==3 && s.servo_id==1 && s.requested>SERVO_MAX_SPEED_DEG_S && moves==before);
-    verify_reset_only(&s);
+    const float speed_rad_s=ARM_DEG_TO_RAD(speed_deg_s);
+    if(axis==4U)return (ArmVelocityCommand){.gripper_rad_s=speed_rad_s};
+    const ArmStatus s=arm_state();
+    const ArmKinConfig geometry={.l1_m=ARM_L12_M,.l2_m=ARM_L23_M};
+    float jacobian[4][4];
+    assert(ArmKin_Jacobian(&geometry,s.q_rad,jacobian));
+    return (ArmVelocityCommand){
+        .vx_m_s=jacobian[0][axis]*speed_rad_s,.vz_m_s=jacobian[1][axis]*speed_rad_s,
+        .pitch_rad_s=jacobian[2][axis]*speed_rad_s,.roll_rad_s=jacobian[3][axis]*speed_rad_s};
 }
-static void gripper_limit(void)
+static void joint_limit(unsigned axis)
 {
-    start_arm();ArmVelocityCommand command={.gripper_rad_s=ARM_DEG_TO_RAD(31.0f)};drive(command,50);
+    static const uint8_t ids[5]={3U,2U,1U,4U,5U};
+    if(axis==0U) {
+        /* 屈肘至约120°，使肩轴限速附近的指令也符合50 mm/s腕交点限速。 */
+        positions[1]=1722;run(150);
+    }
+    start_arm();
+    /* DLS 解受浮点精度和阻尼影响，四个 IK 轴在上限下方预留少量裕量。 */
+    const float allowed_deg_s=axis==4U ? 15.0f : 14.99f;
+    drive(command_for_axis(axis,allowed_deg_s),ARM_PERIOD_MS+1U);
     ArmStatus s=arm_state();
-    assert(s.error==ARM_ERROR_JOINT_SPEED_LIMIT && s.joint==5 && s.servo_id==5);
+    const float accepted_deg_s=ARM_RAD_TO_DEG(s.joint_velocity_rad_s[axis]);
+    assert(s.state==ARM_RUNNING && accepted_deg_s>14.9f && accepted_deg_s<15.001f);
+    drive(zero,150);
+    assert(moves && arm_state().state==ARM_RUNNING);
+    const unsigned before=moves;
+    drive(command_for_axis(axis,-15.1f),50);
+    s=arm_state();
+    assert(s.state==ARM_FAULT && s.error==ARM_ERROR_JOINT_SPEED_LIMIT);
+    assert(s.joint==axis+1U && s.servo_id==ids[axis] && s.limit==15.0f);
+    assert(s.requested>15.0f && s.requested<15.2f && moves==before);
     verify_reset_only(&s);
 }
 static void unreachable(void)
 {
     /* 舵机整数位置使肘接近伸直，径向任务应由残差检测拒绝。 */
     positions[1]=833;run(150);start_arm();
-    ArmVelocityCommand command={.vx_m_s=0.03f};drive(command,100);
+    ArmVelocityCommand command={.vx_m_s=0.008f};drive(command,100);
     ArmStatus s=arm_state();assert(s.state==ARM_FAULT && s.error==ARM_ERROR_VELOCITY_UNACHIEVABLE);
-    assert(s.linear_residual_m_s>0.02f && !moves);
+    assert(s.linear_residual_m_s>0.007f && !moves);
 }
 static void timeout(void)
 {
@@ -230,7 +252,7 @@ static void invalid_and_timing(void)
 }
 static void atomic_group(void)
 {
-    uint8_t ids[5]={3,2,1,4,5};uint16_t p[5]={1510,1520,1530,1540,499},t[5]={20,20,20,20,20};
+    uint8_t ids[5]={3,2,1,4,5};uint16_t p[5]={1510,1520,1530,1540,499},t[5]={500,500,500,500,500};
     assert(Servo_ControlClaim(SERVO_OWNER_ARM,31));assert(!Servo_ControlClaim(SERVO_OWNER_RC,7));
     assert(Servo_ControlMoveGroup(SERVO_OWNER_ARM,ids,p,t,5)==SERVO_RANGE);run(100);assert(!moves);
     p[4]=1550;unsigned count=0;while(Servo_RequestPosition(1,NULL)==SERVO_QUEUED)++count;
@@ -298,8 +320,11 @@ int main(int argc,char **argv)
     else if(!strcmp(scenario,"normal") || !strcmp(scenario,"wrap"))normal();
     else if(!strcmp(scenario,"stop_drain"))stop_drain();
     else if(!strcmp(scenario,"linear"))linear_limit();
-    else if(!strcmp(scenario,"joint"))joint_limit();
-    else if(!strcmp(scenario,"gripper"))gripper_limit();
+    else if(!strcmp(scenario,"shoulder"))joint_limit(0);
+    else if(!strcmp(scenario,"elbow"))joint_limit(1);
+    else if(!strcmp(scenario,"joint"))joint_limit(2);
+    else if(!strcmp(scenario,"roll"))joint_limit(3);
+    else if(!strcmp(scenario,"gripper"))joint_limit(4);
     else if(!strcmp(scenario,"unreachable"))unreachable();
     else if(!strcmp(scenario,"timeout"))timeout();
     else if(!strcmp(scenario,"feedback"))feedback_loss();

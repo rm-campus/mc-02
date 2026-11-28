@@ -1,6 +1,13 @@
 #ifndef SERVO_CONFIG_H
 #define SERVO_CONFIG_H
 #include "robot_control_config.h"
+/* 所有舵机共用的输出轴位置指令限速，单位为整数 °/s。 */
+#ifndef SERVO_MAX_SPEED_DEG_S
+#define SERVO_MAX_SPEED_DEG_S 15U
+#endif
+#if SERVO_MAX_SPEED_DEG_S < 1
+#error "Servo speed limit must be positive"
+#endif
 /* USB 监测固件默认镜像 UART7 实际收到的字节；设 0 可关闭自动输出。 */
 #ifndef SERVO_RX_TRACE_ENABLE
 #define SERVO_RX_TRACE_ENABLE SERVO_STATUS_ONLY
@@ -20,6 +27,7 @@
 #define SERVO_JOG_STEP_DEG 10.0f
 #endif
 #ifndef SERVO_JOG_MOVE_MS
+/* 点动的最短时间。实际下发时还要满足量化位移对应的限速。 */
 #define SERVO_JOG_MOVE_MS 500U
 #endif
 #define SERVO_JOG_TOLERANCE_DEG 1.0f
@@ -54,7 +62,8 @@
 /* ID1..5 的摇杆正向对应 P 增加(+1)或减小(-1)，最大协议角速度 deg/s。
  * 不增加底盘 yaw 舵机。各设备的位置范围见下表。 */
 #define SERVO_RC_AXIS_TABLE \
-    {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}
+    {1, SERVO_MAX_SPEED_DEG_S}, {1, SERVO_MAX_SPEED_DEG_S}, {1, SERVO_MAX_SPEED_DEG_S}, \
+    {1, SERVO_MAX_SPEED_DEG_S}, {1, SERVO_MAX_SPEED_DEG_S}
 #define SERVO_COUNT 5U
 #if ROBOT_CONTROL_ENABLE
 /* P1500 ± 555 P。270° 位置模式下向内取整，行程不超过 ±75°。 */
