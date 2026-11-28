@@ -8,6 +8,13 @@
 #if SERVO_MAX_SPEED_DEG_S < 1
 #error "Servo speed limit must be positive"
 #endif
+/* 以 P1500 为中心，所有舵机共用的单侧位置限位，单位为整数 °。 */
+#ifndef SERVO_POSITION_LIMIT_DEG
+#define SERVO_POSITION_LIMIT_DEG 90U
+#endif
+#if SERVO_POSITION_LIMIT_DEG < 1 || SERVO_POSITION_LIMIT_DEG > 180
+#error "Servo position limit must be in 1..180 degrees"
+#endif
 /* USB 监测固件默认镜像 UART7 实际收到的字节；设 0 可关闭自动输出。 */
 #ifndef SERVO_RX_TRACE_ENABLE
 #define SERVO_RX_TRACE_ENABLE SERVO_STATUS_ONLY
@@ -65,14 +72,6 @@
     {1, SERVO_MAX_SPEED_DEG_S}, {1, SERVO_MAX_SPEED_DEG_S}, {1, SERVO_MAX_SPEED_DEG_S}, \
     {1, SERVO_MAX_SPEED_DEG_S}, {1, SERVO_MAX_SPEED_DEG_S}
 #define SERVO_COUNT 5U
-#if ROBOT_CONTROL_ENABLE
-/* P1500 ± 555 P。270° 位置模式下向内取整，行程不超过 ±75°。 */
-#define SERVO_SHOULDER_MIN_P 945U
-#define SERVO_SHOULDER_MAX_P 2055U
-#else
-#define SERVO_SHOULDER_MIN_P 834U
-#define SERVO_SHOULDER_MAX_P 2166U
-#endif
 #ifndef SERVO_FASHIONSTAR_GRIPPER
 #define SERVO_FASHIONSTAR_GRIPPER 0
 #endif
@@ -118,10 +117,10 @@
 #define SERVO_DEVICE_TABLE \
     {1U, "ZP30", 500U, 2500U}, \
     {2U, "ZP35", 500U, 2500U}, \
-    {3U, "ZP45", SERVO_SHOULDER_MIN_P, SERVO_SHOULDER_MAX_P}, \
+    {3U, "ZP45", 500U, 2500U}, \
     {4U, "ZP25S", 500U, 2500U}, \
     {5U, SERVO_GRIPPER_MODEL, SERVO_GRIPPER_MIN_P, SERVO_GRIPPER_MAX_P}
-/* 500～2500 是协议范围，装配后仍需按实测机械行程逐轴标定。 */
+/* 表内为机械标定范围，实际指令还受各设备以 P1500 为中心的位置限位。 */
 #define SERVO_QUEUE_SIZE 16U
 #define SERVO_RX_RING_SIZE 256U
 #define SERVO_TX_TIMEOUT_MS 20U

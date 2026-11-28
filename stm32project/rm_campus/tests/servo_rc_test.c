@@ -82,9 +82,9 @@ int main(void)
     receiver.rocker_l_v=660;freeze_rc=true;run(101);assert(!control().armed_mask && !control().off_seen);
     freeze_rc=false;run(400);assert(!control().armed_mask);rearm(0);assert(control().armed_mask==7);
     /* Maximum travel clamp and fractional accumulation for very small deflections. */
-    receiver.rocker_l_v=660;run(9500);assert(positions[0]==2500);
-    receiver.rocker_l_v=-660;run(18500);assert(positions[0]==500);
-    receiver.rocker_l_v=61;run(4000);assert(positions[0]>=501 && positions[0]<=502);
+    receiver.rocker_l_v=660;run(9500);assert(positions[0]==2166);
+    receiver.rocker_l_v=-660;run(18500);assert(positions[0]==834);
+    receiver.rocker_l_v=61;run(4000);assert(positions[0]>=835 && positions[0]<=836);
     center();run(100);
     for(unsigned id=1;id<=5;++id)assert(state((uint8_t)id).online);
     /* Late control ticks stop, with no large catch-up jump. */
@@ -112,7 +112,9 @@ int main(void)
 #else
     assert(rows(5)==0 && rows(9)>0); /* Disabling servo telemetry preserves motor telemetry. */
 #endif
-    usb.ready=false;run(5);center();receiver.switch_c=1;tick=UINT32_MAX-150U;assert(Servo_Init());run(600);
+    usb.ready=false;run(5);center();receiver.switch_c=1;
+    positions[3]=positions[4]=1500;
+    tick=UINT32_MAX-150U;assert(Servo_Init());run(600);
     receiver.switch_c=-1;run(400);assert(control().armed_mask==24);
     assert(!depth && mask==0);
     puts("PASS: RC groups/axes, startup/centering, incremental hold/limits, manual arbitration, per-axis loss/rearm, feedback fairness, five-angle CSV/owners/session and tick wrap.");

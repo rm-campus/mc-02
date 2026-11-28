@@ -199,8 +199,12 @@ static unsigned report(char *out, const ServoModeReport *modes)
         unsigned mode=modes ? modes->mode[i] : d->mode;
         bool mode_valid=modes ? mode!=0U : d->mode_valid;
         const char *check=modes ? Servo_ResultName(modes->result[i]) : "CACHED";
-        n=snprintf(out+used,REPORT_SIZE-used,"id=%03u model=%s online=%u position=%s age_ms=%s mode=%u mode_valid=%u mode_check=%s version=%s range=%u..%u target=%u ticket=%lu result=%s timeouts=%lu\n",
-            c->id,c->model,fresh,position,age,mode,mode_valid,check,d->version_valid?d->version:"NA",c->minimum,c->maximum,d->target,
+        uint16_t minimum,maximum;
+        char range[16]="NA";
+        if(Servo_GetEffectiveRange(i,d,&minimum,&maximum))
+            (void)snprintf(range,sizeof(range),"%u..%u",(unsigned)minimum,(unsigned)maximum);
+        n=snprintf(out+used,REPORT_SIZE-used,"id=%03u model=%s online=%u position=%s age_ms=%s mode=%u mode_valid=%u mode_check=%s version=%s range=%s target=%u ticket=%lu result=%s timeouts=%lu\n",
+            c->id,c->model,fresh,position,age,mode,mode_valid,check,d->version_valid?d->version:"NA",range,d->target,
             (unsigned long)d->last_ticket,Servo_ResultName(d->last_result),(unsigned long)d->timeouts);
         if(n<0 || (unsigned)n>=REPORT_SIZE-used)return 0;
         used+=(unsigned)n;

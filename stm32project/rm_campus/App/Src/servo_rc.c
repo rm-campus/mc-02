@@ -115,8 +115,9 @@ void ServoRc_Process(uint32_t now)
         uint8_t bit=(uint8_t)(1U<<i);
         if(!(selected&bit) || (state.fault_mask&bit))continue;
         ServoState s;bool seen=Servo_CopyState((uint8_t)(i+1U),&s);
-        const ServoConfig *c=Servo_GetConfig(slots[i]);
-        bool usable=seen && fresh(&s,now) && s.position>=c->minimum && s.position<=c->maximum;
+        uint16_t minimum,maximum;
+        bool usable=seen && fresh(&s,now) && Servo_GetEffectiveRange(slots[i],&s,&minimum,&maximum) &&
+            s.position>=minimum && s.position<=maximum;
         if(!(state.armed_mask&bit)) {
             if(ready && usable) {
                 state.target_p[i]=(float)s.position;last_p[i]=s.position;modes[i]=s.mode;state.armed_mask|=bit;
@@ -129,8 +130,8 @@ void ServoRc_Process(uint32_t now)
         float speed=fminf(SERVO_MAX_SPEED_DEG_S,axes[i].speed_deg_s);
         float p=state.target_p[i]+fraction(input[i])*(float)axes[i].direction*speed*
             ((float)elapsed*0.001f)*(2000.0f/span);
-        if(p<c->minimum)p=(float)c->minimum;
-        if(p>c->maximum)p=(float)c->maximum;
+        if(p<minimum)p=(float)minimum;
+        if(p>maximum)p=(float)maximum;
         uint16_t rounded=(uint16_t)lroundf(p);
         if(rounded!=last_p[i]) {
             if(Servo_RcMovePulse((uint8_t)(i+1U),rounded,SERVO_RC_PERIOD_MS,NULL)!=SERVO_QUEUED) { fault(i);continue; }

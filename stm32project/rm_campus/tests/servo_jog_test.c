@@ -33,6 +33,8 @@ static void motions(void)
     run(160);assert(strstr(output,"reason=OFFLINE") && strstr(output,"reason=INVALID") && moves==8);
     clear_log();input("servo_move 001 1200 50\nservo_set_id 001 002\nservo_position_mode 1\n");
     run(120);assert(!output_len && moves==8);
+    positions[0]=2130;input("servo_test_001_1\n");run(250);
+    assert(strstr(output,"reason=LIMIT") && moves==8 && positions[0]==2130);
 }
 
 static void timing(void)
@@ -62,6 +64,7 @@ static void timing(void)
 static void modes_test(void)
 {
     mode_reply_mask=30U; modes[1]=5;
+    modes[2]=3U;
     start_test();
     assert(!state(1).mode_valid);
     input("servo_test_001_1\n");run(1400);
@@ -72,7 +75,9 @@ static void modes_test(void)
     input("servo_test_002_2\n");run(300);assert(moves==1 && strstr(output,"reason=BAD_MODE"));
     positions[2]=2470;input("servo_test_003_1\n");run(200);
     assert(strstr(output,"reason=LIMIT") && moves==1 && positions[2]==2470);
-    input("servo_test_005_2\n");run(900);assert(positions[4]==1426 && moves==2);
+    positions[2]=2300;input("servo_test_003_1\n");run(900);
+    assert(positions[2]==2411 && moves==2);
+    input("servo_test_005_2\n");run(900);assert(positions[4]==1426 && moves==3);
 }
 
 static void faults(void)

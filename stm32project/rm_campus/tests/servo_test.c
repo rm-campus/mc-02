@@ -20,6 +20,7 @@ static bool uart_unavailable;
 static uint8_t *rx_byte;
 static char tx[65]; static uint32_t tx_due;
 static unsigned tx_count,moves,reply_mask=31;
+static unsigned uart_recoveries,resumes;
 static unsigned last_move_ms;
 static unsigned mode_writes[5], mode_reply_mask=31, drop_first_mode_read;
 static unsigned mode_reads;
@@ -46,7 +47,7 @@ osThreadId_t osThreadGetId(void){return (void *)1;}
 uint32_t osThreadFlagsSet(osThreadId_t t,uint32_t f){(void)t;return f;}
 uint32_t osThreadFlagsWait(uint32_t f,uint32_t o,uint32_t n){(void)f;(void)o;(void)n;return 0;}
 int32_t osDelay(uint32_t n){(void)n;return 0;}
-int HAL_UART_Abort(UART_HandleTypeDef *h){assert(h==&huart7);rx_byte=NULL;tx_pending=false;return HAL_OK;}
+int HAL_UART_Abort(UART_HandleTypeDef *h){assert(h==&huart7);rx_byte=NULL;tx_pending=false;++uart_recoveries;return HAL_OK;}
 int HAL_UART_AbortReceive(UART_HandleTypeDef *h){assert(h==&huart7);rx_byte=NULL;return HAL_OK;}
 int HAL_HalfDuplex_EnableReceiver(UART_HandleTypeDef *h){assert(h==&huart7);receive_mode=true;return HAL_OK;}
 int HAL_HalfDuplex_EnableTransmitter(UART_HandleTypeDef *h){assert(h==&huart7&&!rx_byte);receive_mode=false;return HAL_OK;}
@@ -143,6 +144,7 @@ static void bus_step(void)
     fs_misses=fs_misses_after_zp;
 #endif
     unsigned id=0,p=0,ms=0; assert(sscanf(tx,"#%3u",&id)==1&&id>=1&&id<=5);
+    if(strcmp(tx+4,"PDCT!")==0)++resumes;
     if(sscanf(tx,"#%3uP%4uT%4u!",&id,&p,&ms)==3) {
         if (!(motion_hold_mask & (1U<<(id-1U)))) positions[id-1]=(uint16_t)p;
         last_move_ms=ms;
@@ -267,10 +269,10 @@ static void speed_ceiling(void)
     assert(moves==before+2U && last_move_ms==reversal_ms && state(2).position_ms==sample_ms);
 
     uint32_t ticket;
-    assert(Servo_MovePulse(2,700,20,&ticket)==SERVO_QUEUED);
+    assert(Servo_MovePulse(2,834,20,&ticket)==SERVO_QUEUED);
     for(unsigned i=0;i<100U && (state(2).last_ticket!=ticket || state(2).last_result==SERVO_QUEUED);++i)run(1);
     /* The pending reversal can still be anywhere through P1900. */
-    const unsigned bounded_ms=(162000U+SERVO_MAX_SPEED_DEG_S-1U)/SERVO_MAX_SPEED_DEG_S;
+    const unsigned bounded_ms=((1900U-834U)*135U+SERVO_MAX_SPEED_DEG_S-1U)/SERVO_MAX_SPEED_DEG_S;
     const bool fits=bounded_ms<=9999U;
     const unsigned expected_moves=before+2U+(fits ? 1U : 0U);
     assert(state(2).last_ticket==ticket && state(2).last_result==(fits ? SERVO_OK : SERVO_RANGE));
@@ -291,6 +293,7 @@ int main(void)
 {
     protocol();assert(Servo_Init());uint32_t ticket;
     if(SERVO_STATUS_ONLY) {
+        modes[1]=2U; modes[2]=3U; modes[3]=4U; mode_reply_mask&=~16U;
         usb.ready=true; run(600);
         assert(!moves && !output_len);
         for(unsigned i=0;i<5;++i)positions[i]=(uint16_t)(1200+i*100);
@@ -305,10 +308,14 @@ int main(void)
             output_len=0;output[0]=0;
             input("servo_sta");input("tus\r\n");run(100);
             assert(strstr(output,"SERVO_STATUS BEGIN") && strstr(output,"SERVO_STATUS END"));
+            assert(!state(5).mode_valid);
             for(unsigned i=0;i<5;++i) {
                 char row[96];
                 snprintf(row,sizeof(row),"id=%03u model=%s online=1 position=%u",i+1,Servo_GetConfig(i)->model,positions[i]);
-                assert(strstr(output,row) && !mode_writes[i]);
+                const char *start=strstr(output,row);
+                assert(start && !mode_writes[i]);
+                const char *range=strstr(start,(i==2U || i==3U) ? "range=500..2500" : "range=834..2166");
+                assert(range && range<strchr(start,'\n'));
             }
         }
         reply_mask &= ~16U; run(550); output[0]=0;output_len=0;
@@ -325,8 +332,15 @@ int main(void)
     for(unsigned i=1;i<=5;++i){ServoState s=state((uint8_t)i);assert(s.online&&s.position==1500&&s.mode_valid&&s.mode==1&&s.version_valid);}
     assert(moves==0); /* Startup only queried, no movement/config writes. */
     assert(Servo_MovePulse(1,499,1000,&ticket)==SERVO_RANGE);
-    assert(Servo_MovePulse(3,833,1000,&ticket)==SERVO_RANGE);
-    assert(Servo_MovePulse(3,2167,1000,&ticket)==SERVO_RANGE);
+    for(uint8_t id=1U;id<=SERVO_COUNT;++id) {
+        assert(Servo_MovePulse(id,833,1000,&ticket)==SERVO_RANGE);
+        assert(Servo_MovePulse(id,2167,1000,&ticket)==SERVO_RANGE);
+    }
+    const uint8_t group_ids[]={1U,4U};
+    const uint16_t group_positions[]={1600U,2167U},group_times[]={1000U,1000U};
+    assert(Servo_ControlClaim(SERVO_OWNER_ARM,9U));
+    assert(Servo_ControlMoveGroup(SERVO_OWNER_ARM,group_ids,group_positions,group_times,2U)==SERVO_RANGE);
+    assert(Servo_ControlRelease(SERVO_OWNER_ARM));
     assert(Servo_MovePulse(1,1500,10000,&ticket)==SERVO_RANGE);
     assert(Servo_RequestPosition(255,&ticket)==SERVO_INVALID);
     assert(Servo_MovePulse(1,1600,1000,&ticket)==SERVO_QUEUED);
@@ -404,6 +418,7 @@ int main(void)
     assert(strstr(output,"first_ms=300")&&strstr(output,"ASCII #001PMOD2!"));
     assert(strstr(output,"HEX 23 30 30 31 50 4D 4F 44 32 21"));
     assert(state(1).mode==2 && mode_writes[0]==0U);
+    assert(Servo_MovePulse(1,2167U,1000,&ticket)==SERVO_RANGE);
     output_len=0; output[0]=0;
     unsigned before_batch=moves;
     drop_first_mode_read=1U;
@@ -413,6 +428,23 @@ int main(void)
     assert(strstr(output,"requested_mode=3")&&strstr(output,"mode=1 mode_valid=1 mode_check=BAD_MODE"));
     for(unsigned i=0;i<5;++i)assert(mode_writes[i]==1U);
     assert(moves==before_batch && state(1).mode==3 && state(2).mode==3 && state(3).mode==1);
+    motion_hold_mask|=1U;
+    assert(Servo_MovePulse(1,2500U,1000,&ticket)==SERVO_QUEUED);
+    run(80); assert(moves==before_batch+1U && state(1).target==2500U);
+    assert(Servo_Pause(1,&ticket)==SERVO_QUEUED);
+    run(80); assert(state(1).last_ticket==ticket && state(1).last_result==SERVO_OK);
+    assert(Servo_Resume(1,&ticket)==SERVO_QUEUED);
+    run(80); assert(state(1).last_ticket==ticket && state(1).last_result==SERVO_OK && resumes==1U);
+    assert(Servo_Pause(1,&ticket)==SERVO_QUEUED);
+    run(80); assert(state(1).last_result==SERVO_OK);
+    modes[0]=1U;
+    assert(Servo_RequestModeProbe(1,&ticket)==SERVO_QUEUED);
+    run(80); assert(state(1).mode_valid && state(1).mode==1U);
+    const unsigned before_recoveries=uart_recoveries;
+    assert(Servo_Resume(1,&ticket)==SERVO_QUEUED);
+    run(80); assert(state(1).last_ticket==ticket && state(1).last_result==SERVO_RANGE);
+    assert(resumes==1U && uart_recoveries==before_recoveries);
+    motion_hold_mask&=~1U;
     output_len=0; output[0]=0;
     mode_reply_mask&=~1U; input("servo_mode_probe 001\n");run(1150);
     assert(strstr(output,"SERVO_MODE_PROBE id=001 result=TIMEOUT mode=0 window_ms=1000 rx_bytes=0"));

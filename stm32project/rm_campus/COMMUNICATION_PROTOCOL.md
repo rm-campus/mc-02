@@ -72,7 +72,7 @@ SERVO_RX seq=0 n=10 first_ms=104 last_ms=105 tx=#001PMOD! tc_ms=100 dt_ms=4 lost
 三位 ID 仅接受 001～005，方向仅接受 1、2。点动一次发一行，循环发送会多次运动。
 USB 按接收顺序保存已接受的请求，同一台的连续两步也各自重新读位置。模式未知时会向目标 ID 查询 PMOD，
 不写模式。模式 1、2 每 10° 约 74P，模式 3、4 约 111P；模式 2、4 的顺时针对应 P 减小。
-若整步超出设备配置的限位，拒绝该步。
+点动要求回读起点和整步目标都处于当前有效范围内。该范围取设备配置与模式限位的交集。默认 `SERVO_POSITION_LIMIT_DEG=90U` 时，众灵模式 1/2 使用 P834～P2166，模式 3/4 使用 P500～P2500。
 
 以起点 P1868、模式 1 为例，成功路径的回包如下：
 
@@ -164,14 +164,15 @@ SERVO_BUS_ENABLE=1、SERVO_USB_DEBUG_ENABLE=1，Flash 开关关闭时也可使�
 
 | 命令 | 作用 |
 |---|---|
-| servo_status | 查询五台在线、P 位置值/年龄、模式/版本、限位、最近 ticket/result 和总线错误 |
+| servo_status | 查询五台在线、P 位置值/年龄、模式/版本、当前有效限位 `range`、最近 ticket/result 和总线错误 |
 | servo_read 001 | 提交位置查询，随后用 servo_status 查看结果 |
 | servo_move 001 1500 1000 | ID1 运动到 P1500，请求时长 1000 ms；固件按 30°/s 延长过短的时长。要求在线、模式 1～4、通过该轴位置限位 |
 | servo_stop 001 | 终止该轴动作 |
-| servo_pause 001 / servo_resume 001 | 暂停 / 继续 |
+| servo_pause 001 / servo_resume 001 | 暂停 / 继续。若 MCU 记录的暂停目标已超出当前模式的限位，继续动作在发送前返回 RANGE。 |
 | servo_torque 001 0 / servo_torque 001 1 | 释放 / 恢复扭力，需显式调用 |
 
 数字为非负十进制，拒绝缺少/多余参数与广播 ID。P 不是角度，time 范围 0～9999 ms。
+`servo_move` 的目标在入队和发送前均须通过当前有效范围检查，越界返回 `RANGE`。
 返回 SERVO QUEUED id=1 ticket=7; use servo_status for result 只表示入队，运动命令没有硬件 ACK，发送完成也不证明到位。
 同 ID 未发送的位置请求合并为最新值；离线取消未发送动作。last ticket/result 不构成完整请求历史。
 回复槽满时新命令不执行，随后给出 SERVO BUSY rejected=N。接口错误包括 INVALID、RANGE、OFFLINE、BAD_MODE、NOT_READY、DISABLED。

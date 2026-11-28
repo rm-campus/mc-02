@@ -34,6 +34,8 @@ typedef struct {
     uint8_t probe_raw[ZP_FRAME_MAX];
 } ServoModeReport;
 const ServoConfig *Servo_GetConfig(unsigned index);
+/* 使用同一份状态的已确认模式。state 为空时采用未知模式的范围。 */
+bool Servo_GetEffectiveRange(unsigned index, const ServoState *state, uint16_t *minimum, uint16_t *maximum);
 const char *Servo_ResultName(ServoResult result);
 #if SERVO_JOG_TEST_ENABLE
 typedef struct {

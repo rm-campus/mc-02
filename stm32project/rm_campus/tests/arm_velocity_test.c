@@ -186,7 +186,7 @@ static void joint_limit(unsigned axis)
 static void unreachable(void)
 {
     /* 舵机整数位置使肘接近伸直，径向任务应由残差检测拒绝。 */
-    positions[1]=833;run(150);start_arm();
+    positions[1]=834;run(150);start_arm();
     ArmVelocityCommand command={.vx_m_s=0.008f};drive(command,100);
     ArmStatus s=arm_state();assert(s.state==ARM_FAULT && s.error==ARM_ERROR_VELOCITY_UNACHIEVABLE);
     assert(s.linear_residual_m_s>0.007f && !moves);
@@ -241,7 +241,7 @@ static void tracking(void)
 }
 static void mechanical_limit(void)
 {
-    const uint16_t shoulder_max=Servo_GetConfig(2)->maximum;
+    const uint16_t shoulder_max=2166U;
     positions[2]=shoulder_max;run(150);start_arm();
     float q1=(shoulder_max-1500.0f)*ARM_DEG_TO_RAD(270.0f)/2000.0f;
     ArmVelocityCommand command={
@@ -249,7 +249,21 @@ static void mechanical_limit(void)
         .vz_m_s=(ARM_L12_M*cosf(q1)+ARM_L23_M*cosf(q1+ARM_PI/2))*0.15f,
         .pitch_rad_s=0.15f};
     drive(command,100);
-    assert(arm_state().state==ARM_FAULT && arm_state().error==ARM_ERROR_JOINT_LIMIT && !moves);
+    ArmStatus s=arm_state();
+    assert(s.state==ARM_FAULT && s.error==ARM_ERROR_JOINT_LIMIT && !moves);
+    assert(s.servo_id==3 && s.requested>s.limit && fabsf(s.limit-89.91f)<0.01f);
+}
+static void feedback_angle_limit(void)
+{
+    positions[4]=833U;run(150);
+    assert(Arm_SetVelocity(&zero));assert(Arm_Enable());run(1);
+    ArmStatus s=arm_state();
+    assert(s.state==ARM_FAULT && s.error==ARM_ERROR_JOINT_LIMIT && !moves);
+    assert(s.servo_id==5 && s.requested<s.limit && fabsf(s.limit+89.91f)<0.01f);
+    assert(Arm_ClearFault());run(1);
+    assert(arm_state().state==ARM_FAULT);
+    positions[4]=834U;
+    recover();
 }
 static void invalid_and_timing(void)
 {
@@ -341,6 +355,7 @@ int main(int argc,char **argv)
     else if(!strcmp(scenario,"mode"))mode_change();
     else if(!strcmp(scenario,"tracking"))tracking();
     else if(!strcmp(scenario,"mechanical_limit"))mechanical_limit();
+    else if(!strcmp(scenario,"feedback_angle_limit"))feedback_angle_limit();
     else if(!strcmp(scenario,"invalid_timing"))invalid_and_timing();
     else if(!strcmp(scenario,"atomic"))atomic_group();
     else if(!strcmp(scenario,"reports"))reports();

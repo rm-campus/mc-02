@@ -139,8 +139,10 @@ void Arm_Init(uint32_t now)
 }
 static float rad_per_p(uint8_t mode)
 { return ARM_DEG_TO_RAD(mode<=2U ? 270.0f : 180.0f)/2000.0f; }
+static float joint_angle(const JointCalibration *c,uint8_t mode,uint16_t position)
+{ return c->reference_rad+c->direction*((float)position-c->reference_p)*rad_per_p(mode)/c->ratio; }
 /* 一次读取全组快照；时间戳各自保留，不能假装五台同步测量。 */
-static ArmError read_feedback(uint32_t now,unsigned *bad,float *value)
+static ArmError read_feedback(uint32_t now,unsigned *bad,float *value,float *limit)
 {
     Servo_CopySnapshot(&feedback);
     if(!feedback.initialized || !feedback.enabled || !feedback.uart.ready)return ARM_ERROR_NOT_READY;
@@ -150,11 +152,21 @@ static ArmError read_feedback(uint32_t now,unsigned *bad,float *value)
         uint32_t age=now-s->position_ms;*bad=i+1U;*value=(float)age;
         if(s->id!=c->id || !s->online || !s->position_seen || age>=ARM_FEEDBACK_TIMEOUT_MS)return ARM_ERROR_FEEDBACK_STALE;
         if(!s->mode_valid || s->mode!=c->expected_mode || (status.state==ARM_RUNNING && modes[i]!=s->mode)) { *value=s->mode;return ARM_ERROR_BAD_MODE; }
-        float q=c->reference_rad+c->direction*((float)s->position-c->reference_p)*rad_per_p(s->mode)/c->ratio;
+        float q=joint_angle(c,s->mode,s->position);
         status.q_rad[i]=q;
-        const ServoConfig *limits=Servo_GetConfig(slots[i]);
-        if(!isfinite(q) || q<c->minimum_rad || q>c->maximum_rad || s->position<limits->minimum || s->position>limits->maximum) {
+        uint16_t minimum,maximum;
+        if(!Servo_GetEffectiveRange(slots[i],s,&minimum,&maximum)) {
             *value=ARM_RAD_TO_DEG(q);return ARM_ERROR_JOINT_LIMIT;
+        }
+        if(s->position<minimum || s->position>maximum) {
+            *value=ARM_RAD_TO_DEG(q);
+            *limit=ARM_RAD_TO_DEG(joint_angle(c,s->mode,s->position<minimum ? minimum : maximum));
+            return ARM_ERROR_JOINT_LIMIT;
+        }
+        if(!isfinite(q) || q<c->minimum_rad || q>c->maximum_rad) {
+            *value=ARM_RAD_TO_DEG(q);
+            *limit=ARM_RAD_TO_DEG(q<c->minimum_rad ? c->minimum_rad : c->maximum_rad);
+            return ARM_ERROR_JOINT_LIMIT;
         }
         if(age<min_age)min_age=age;
         if(age>max_age)max_age=age;
@@ -181,8 +193,8 @@ void Arm_Process(uint32_t now)
     if(status.state==ARM_IDLE && owns_servos && Servo_ControlRelease(SERVO_OWNER_ARM))owns_servos=false;
     if(status.state==ARM_FAULT) {
         if(m.clear && !m.stop && config_valid && status.calibrated && live_zero(&m,now)) {
-            unsigned bad=0;float value=0;
-            if(read_feedback(now,&bad,&value)==ARM_ERROR_NONE &&
+            unsigned bad=0;float value=0,limit=0;
+            if(read_feedback(now,&bad,&value,&limit)==ARM_ERROR_NONE &&
                 (!owns_servos || !Servo_ControlStopPending(SERVO_OWNER_ARM))) {
                 taskENTER_CRITICAL();
                 /* 清错只能使用仍为当前代的零速度，不能清掉新指令产生的保护条件。 */
@@ -208,15 +220,11 @@ void Arm_Process(uint32_t now)
         fault(ARM_ERROR_COMMAND_TIMEOUT,0,(float)(now-m.time_ms),ARM_COMMAND_TIMEOUT_MS);publish(now);return;
     }
     if(!finite_command(&m.command)) { fault(ARM_ERROR_INVALID_COMMAND,0,0,0);publish(now);return; }
-    unsigned bad=0;float value=0;ArmError health=read_feedback(now,&bad,&value);
+    unsigned bad=0;float value=0,limit=0;ArmError health=read_feedback(now,&bad,&value,&limit);
     if(health!=ARM_ERROR_NONE) {
-        float limit=health==ARM_ERROR_FEEDBACK_STALE ? ARM_FEEDBACK_TIMEOUT_MS :
-            health==ARM_ERROR_FEEDBACK_SKEW ? ARM_MAX_FEEDBACK_SKEW_MS : 0.0f;
+        if(health==ARM_ERROR_FEEDBACK_STALE)limit=ARM_FEEDBACK_TIMEOUT_MS;
+        if(health==ARM_ERROR_FEEDBACK_SKEW)limit=ARM_MAX_FEEDBACK_SKEW_MS;
         if(health==ARM_ERROR_BAD_MODE && bad>=1U && bad<=5U)limit=calibration[bad-1U].expected_mode;
-        if(health==ARM_ERROR_JOINT_LIMIT && bad>=1U && bad<=5U) {
-            const JointCalibration *c=&calibration[bad-1U];
-            limit=ARM_RAD_TO_DEG(status.q_rad[bad-1U]<c->minimum_rad ? c->minimum_rad : c->maximum_rad);
-        }
         fault(health,bad,value,limit);publish(now);return;
     }
     if(owns_servos && Servo_ControlInhibited(SERVO_OWNER_ARM)) { fault(ARM_ERROR_DRIVER,0,0,0);publish(now);return; }
@@ -268,15 +276,22 @@ void Arm_Process(uint32_t now)
     float next[5],dq[5];uint8_t ids[5];uint16_t positions[5],times[5];bool changed=false;
     memcpy(dq,solution.joint_velocity,sizeof(solution.joint_velocity));dq[4]=m.command.gripper_rad_s/calibration[4].ratio;
     for(unsigned i=0;i<5;++i) {
-        const JointCalibration *c=&calibration[i];const ServoConfig *limits=Servo_GetConfig(slots[i]);
+        const JointCalibration *c=&calibration[i];
         next[i]=status.target_rad[i]+dq[i]*(float)elapsed*0.001f;
         if(!isfinite(next[i]) || next[i]<c->minimum_rad || next[i]>c->maximum_rad) {
             fault(ARM_ERROR_JOINT_LIMIT,i+1U,ARM_RAD_TO_DEG(next[i]),ARM_RAD_TO_DEG(next[i]<c->minimum_rad?c->minimum_rad:c->maximum_rad));publish(now);return;
         }
         float p=c->reference_p+c->direction*(next[i]-c->reference_rad)*c->ratio/rad_per_p(modes[i]);
-        if(!isfinite(p) || p<limits->minimum || p>limits->maximum) { fault(ARM_ERROR_JOINT_LIMIT,i+1U,ARM_RAD_TO_DEG(next[i]),0);publish(now);return; }
+        uint16_t minimum,maximum;
+        if(!isfinite(p) || !Servo_GetEffectiveRange(slots[i],&feedback.device[slots[i]],&minimum,&maximum)) {
+            fault(ARM_ERROR_JOINT_LIMIT,i+1U,ARM_RAD_TO_DEG(next[i]),0);publish(now);return;
+        }
+        if(p<minimum || p>maximum) {
+            float limit_rad=joint_angle(c,modes[i],p<minimum ? minimum : maximum);
+            fault(ARM_ERROR_JOINT_LIMIT,i+1U,ARM_RAD_TO_DEG(next[i]),ARM_RAD_TO_DEG(limit_rad));publish(now);return;
+        }
         ids[i]=c->id;positions[i]=(uint16_t)lroundf(p);changed|=positions[i]!=last_p[i];
-        float rounded_q=c->reference_rad+c->direction*((float)positions[i]-c->reference_p)*rad_per_p(modes[i])/c->ratio;
+        float rounded_q=joint_angle(c,modes[i],positions[i]);
         if(rounded_q<c->minimum_rad || rounded_q>c->maximum_rad) {
             fault(ARM_ERROR_JOINT_LIMIT,i+1U,ARM_RAD_TO_DEG(rounded_q),ARM_RAD_TO_DEG(rounded_q<c->minimum_rad?c->minimum_rad:c->maximum_rad));publish(now);return;
         }

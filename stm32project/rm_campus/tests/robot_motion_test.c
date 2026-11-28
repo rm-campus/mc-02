@@ -58,9 +58,9 @@ static void wrist_silence(void)
     ServoModeReport report;
     assert(Servo_CopyModeReport(ticket,&report) && report.result[0]==SERVO_DISABLED);
     assert(!state(1).online && mode_writes[0]==0);
-    assert(Servo_MovePulse(3,944,20,NULL)==SERVO_RANGE);
-    assert(Servo_MovePulse(3,2056,20,NULL)==SERVO_RANGE);
-    puts("PASS: no 001 query/motion/stop/torque/mode frames; shoulder rejects targets outside P945..P2055");
+    assert(Servo_MovePulse(3,833,20,NULL)==SERVO_RANGE);
+    assert(Servo_MovePulse(3,2167,20,NULL)==SERVO_RANGE);
+    puts("PASS: no 001 query/motion/stop/torque/mode frames; PMOD1 shoulder rejects targets outside P834..P2166");
 }
 #endif
 static void publish_rc_frame(void)
@@ -285,6 +285,7 @@ static void joint_speed_limit(void)
 {
     modes[1]=3;
     modes[3]=4;
+    modes[4]=4;
     confirm_initial_gear(ROBOT_SWITCH_UP,ROBOT_DRIVE);
     assert(Servo_Init());
     operate(2400);
@@ -292,6 +293,7 @@ static void joint_speed_limit(void)
     assert(state(2).mode_valid && state(2).mode==3);
     assert(state(3).mode_valid && state(3).mode==1);
     assert(state(4).mode_valid && state(4).mode==4);
+    assert(state(5).mode_valid && state(5).mode==4);
 
     rc.switch_c=ROBOT_SWITCH_MIDDLE;
     operate(80);
@@ -311,6 +313,18 @@ static void joint_speed_limit(void)
     operate(1000);
     assert(abs((int)positions[1]-(1500-delta_180))<=12 && positions[4]==1500);
     puts("PASS: the mapped 001/002/003/004 axes respect the shared speed limit in both position spans");
+
+    rc.rocker_r_v=-660;
+    operate(3700);
+    assert(positions[1]==500 && state(2).target==500);
+    assert(positions[4]==750 && state(5).target==750);
+    rc.rocker_l_h=660; rc.rocker_r_v=660;
+    operate(160);
+    assert(positions[1]>500 && positions[4]>750);
+    operate(6300);
+    assert(positions[1]==2500 && state(2).target==2500);
+    assert(positions[4]==1500 && state(5).target==1500);
+    puts("PASS: confirmed PMOD3/4 retain the full joint and calibrated gripper travel and reverse from endpoints");
 }
 
 static void wheels(void)
@@ -415,11 +429,11 @@ static void sparse_bus(void)
 static void fashionstar_gripper(void)
 {
     assert(FsServo_PulseFromAngle(-216)==1380U && FsServo_AngleFromPulse(1380)==-216);
-    const uint16_t open=FsServo_PulseFromAngle(FS_GRIPPER_OPEN_DDEG);
+    const uint16_t open=2000U;
     const uint16_t halfway=FsServo_PulseFromAngle(FS_GRIPPER_OPEN_DDEG+FS_GRIPPER_TRAVEL_DDEG/2);
     const uint16_t three_quarters=FsServo_PulseFromAngle(FS_GRIPPER_OPEN_DDEG+3*FS_GRIPPER_TRAVEL_DDEG/4);
     const uint16_t closed=FsServo_PulseFromAngle(FS_GRIPPER_OPEN_DDEG+FS_GRIPPER_TRAVEL_DDEG);
-    assert(open==2180U && halfway==1890U && closed==1600U);
+    assert(FsServo_PulseFromAngle(FS_GRIPPER_OPEN_DDEG)==2180U && halfway==1890U && closed==1600U);
     const unsigned sweep_ms=(unsigned)abs(FS_GRIPPER_TRAVEL_DDEG)*100U/SERVO_MAX_SPEED_DEG_S;
     positions[4]=open;
     reply_mask=4U|8U|16U;
@@ -430,8 +444,8 @@ static void fashionstar_gripper(void)
     operate(1600);
     assert(state(5).online && state(5).id_seen);
     assert(state(5).position==open && fs_queries>0 && fs_moves==0);
-    rc.rocker_r_v=0; operate(1000);
-    const int expected=(int)lroundf(2000.0f*SERVO_MAX_SPEED_DEG_S/360.0f);
+    rc.rocker_r_v=0; operate(400);
+    const int expected=(int)lroundf(0.4f*2000.0f*SERVO_MAX_SPEED_DEG_S/360.0f);
     assert(abs((int)positions[4]-(open-expected))<=8);
     operate(sweep_ms/2U-400U);
     assert(positions[4]==halfway && state(5).target==halfway && fs_moves>0);
@@ -456,7 +470,7 @@ static void fashionstar_gripper(void)
     assert(state(5).online && state(5).position==open);
     run(420);
     assert(fs_holds==1U);
-    puts("PASS: V1 mapping and polling; gripper reopens after protocol switch without position replies, with RC link-loss hold");
+    puts("PASS: V1 mapping and polling; gripper reopens to clipped P2000 after protocol switch without position replies, with RC link-loss hold");
 }
 #endif
 
@@ -518,7 +532,7 @@ int main(int argc,char **argv)
     modes[2]=5;           /* ID3 回报非定位模式，整机仍下发 P/T。 */
     assert(Servo_Init());operate(850);
     assert(positions[4]==1500 && moves==0);
-    assert(Servo_RcMovePulse(5,749,20,NULL)==SERVO_RANGE);
+    assert(Servo_RcMovePulse(5,833,20,NULL)==SERVO_RANGE);
     assert(Servo_RcMovePulse(5,1501,20,NULL)==SERVO_RANGE);
     rc.rocker_r_v=0;operate(1000);
     assert(abs((int)positions[4]-(1500-(int)lroundf(2000.0f*SERVO_MAX_SPEED_DEG_S/270.0f)))<=8);
@@ -530,7 +544,11 @@ int main(int argc,char **argv)
     rc.rocker_r_v=-660;operate(300);
     assert(positions[4]==1125 && state(5).target==1125 && grip_stops==0);
     rc.switch_c=ROBOT_SWITCH_DOWN;operate(4200);
-    assert(positions[4]==750 && state(5).target==750);
+    assert(positions[4]==834 && state(5).target==834);
+    const unsigned grip_moves_at_limit=moves;
+    const uint32_t grip_feedback_at_limit=state(5).position_ms;
+    operate(250);
+    assert(moves==grip_moves_at_limit && state(5).position_ms>grip_feedback_at_limit);
     rc.rocker_r_v=660;operate(7350);
     assert(positions[4]==1500 && state(5).target==1500);
     rc.rocker_l_v=1;rc.rocker_l_h=330;operate(800);
@@ -558,17 +576,29 @@ int main(int argc,char **argv)
     shoulder_before=positions[2];
     operate(450);
     assert(positions[2]==shoulder_before && !state(3).online && Servo_RcInhibited()==0U);
-    const uint16_t shoulder_recovery=SERVO_SHOULDER_MIN_P+16U;
+    const uint16_t shoulder_recovery=850U;
     positions[2]=shoulder_recovery;
     reply_mask|=4U;
     for(unsigned elapsed=0;positions[2]==shoulder_recovery && elapsed<1500U;++elapsed) operate(1);
     assert(positions[2]>shoulder_recovery && positions[2]<shoulder_recovery+20U && Servo_RcInhibited()==0U);
     /* 在中档持续打满肩关节摇杆，分别验证上下限与反向退出。 */
     rc.rocker_l_v=660; operate(11000);
-    assert(positions[2]==2055 && state(3).target==2055);
+    assert(positions[2]==2166 && state(3).target==2166);
     rc.rocker_l_v=-660; operate(11000);
-    assert(positions[2]==945 && state(3).target==945);
+    assert(positions[2]==834 && state(3).target==834);
+
+    record_wire=true;
+    positions[2]=833;
+    operate(140);
+    assert(state(3).position==833 && metadata_frames(ROBOT_ARM,"PDST!")==1);
+    const unsigned shoulder_moves_at_limit=moves;
+    rc.rocker_l_v=660;
+    operate(200);
+    assert(positions[2]==833 && moves==shoulder_moves_at_limit);
+    positions[2]=834;
+    operate(220);
+    assert(positions[2]>834 && moves>shoulder_moves_at_limit);
     assert(!depth);
-    puts("PASS: ZP 005 follows signed CH3 at P750/P1125/P1500 with range checks, gear cancellation, and same-gear recovery");
+    puts("PASS: ZP 005 follows signed CH3 at P834/P1125/P1500; unknown/non-position PMOD clips motion and declines out-of-range feedback");
     return 0;
 }

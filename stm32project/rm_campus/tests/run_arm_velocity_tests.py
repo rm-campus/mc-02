@@ -31,7 +31,8 @@ def main():
         # 各速度故障之后启动全新进程；只有静态区重新初始化可解除复位锁存。
         scenarios=['startup','normal','stop_drain','linear','fresh_boot','shoulder','fresh_boot','elbow','fresh_boot',
                    'joint','fresh_boot','roll','fresh_boot','gripper','fresh_boot','unreachable','timeout','feedback',
-                   'tx_failure','manual_halt','mode','tracking','mechanical_limit','invalid_timing','atomic','reports','wrap']
+                   'tx_failure','manual_halt','mode','tracking','mechanical_limit','feedback_angle_limit',
+                   'invalid_timing','atomic','reports','wrap']
         for label,enabled,output,valid,injected in [('enabled',1,1,1,True),('disabled',0,0,0,False),
                 ('uncalibrated',1,1,0,True),('placeholder',1,1,1,False),('shadow',1,0,1,True)]:
             exe=folder/(label+'.exe')

@@ -43,9 +43,11 @@ UART7 固定 115200/8N1。先确认两台的有效电压交集、线序和信号
 默认 `FS_GRIPPER_BENCH_ISOLATION=1`。待机和下档只轮询 U25-M，上、中档轮询众灵。
 这台 U25-M 实测在众灵帧之后会漏回多条查询，分档轮询可减少两种协议的切换。
 
-CH3 的 −660、0、+660 分别对应开端、行程中点和闭合端，按有符号杆量线性换算。
+CH3 的 −660、0、+660 分别映射到 P2180、P1890、P1600。
 `FS_GRIPPER_OPEN_DDEG=1224` 对应实测开端 P2180，`FS_GRIPPER_TRAVEL_DDEG=-1044`
-对应反向 104.4° 行程，闭合端为 P1600。进入下档后目标从回读位置限速移向当前杆位对应的角度。
+对应反向 104.4° 映射行程。位置指令受 P1000～P2000 限制，默认杆位目标范围为 P1600～P2000，
+靠近开端的越界目标停在 P2000，中位和闭合端为 P1890 与 P1600。进入下档时，P1000～P2000 范围内的回读位置均可接管，
+然后限速移向限幅后的杆位目标。
 USB 第五路为「005 夹爪」，保留实测、发送目标和速度字段。
 这一轴把 −180°～+180° 映射到 P500～P2500，因此 1 P 约为 0.18°，速度用相同的映射比例换算。
 启动示波器可用 `python tools/servo_scope.py --port COM5 --joint 5`，串口号按现场枚举选择。
@@ -75,12 +77,22 @@ App/Inc/servo_config.h：SERVO_BUS_ENABLE=1，SERVO_USB_DEBUG_ENABLE=1。前者�
 后者只控制手动 USB 命令，不影响应用层 API。ServoBusTask 复用现有 AboveNormal、512 words 栈，没有增加任务。
 
 SERVO_DEVICE_TABLE 默认：001=ZP30、002=ZP35、003=ZP45、004/005=两台 ZP25S。
-众灵整机预设将 005 的软件行程设为 P750～P1500。CH9 下档用 CH3 线性控制，回中目标为 P1125。
+众灵整机预设沿用 005 的 P750～P1500 杆位映射。CH9 下档用 CH3 线性控制，回中目标为 P1125。
+有效目标范围在模式 3/4 为 P750～P1500，其余模式或模式未知时为 P834～P1500。
 先逐台连接并配置唯一 ID，再并到同一总线。出厂 ID 通常为 000，本程序不会自动给它们改 ID。
 未改号时 001～005 查询可能全部离线。不要使用参考例程中的 #255PID000! 广播改号。
 
-表中的 500～2500 是协议允许范围，不是经过装配验证的机械行程。每个关节独立的 minimum/maximum
-应按实际安装收窄；本次不猜测各关节零位、方向和安全端点。命令中的 position 是 P 值，不是角度。
+`App/Inc/servo_config.h` 中的 `SERVO_POSITION_LIMIT_DEG` 控制协议中点 P1500 两侧的指令角度上限，默认 `90U`。
+各关节的指令范围由设备表中的 `minimum`、`maximum` 与对应的角度限位换算范围取交集。下表使用默认配置。
+
+| 舵机与模式 | 以协议中点 P1500 为中心的指令范围 |
+|---|---|
+| 众灵 PMOD 1/2（270°） | P834～P2166（向内取整，每侧 89.91°） |
+| 众灵 PMOD 3/4（180°） | P500～P2500（每侧 90°） |
+| 众灵模式未知或 PMOD 5～8 | P834～P2166（沿用 270° 模式的保守 P 值） |
+| U25-M 单圈角度控制 | P1000～P2000（每侧 90°） |
+
+这些范围约束下发的位置指令。关节零位、方向和机械行程仍需按实际装配标定，必要时收窄设备表范围。
 ID 必须唯一且不是 255；非法配置显示 init=0，驱动不开始发送。
 
 上电仅逐台读取 ID、版本、工作模式、当前位置，不主动运动、释力或写入配置。
@@ -122,8 +134,7 @@ SERVO_RC_TELEMETRY_ENABLE 控制角度自动回传，SERVO_BUS_ENABLE 仍为总�
 ID1～5 对应原五台舵机，不增加底盘 yaw 舵机。底盘控制保持独立，因此已启用的底盘会同时响应同一摇杆。
 每 20 ms 更新一次增量目标：角速度=死区后的摇杆比例×每轴最大角速度。
 ±60 为死区，SERVO_RC_AXIS_TABLE 按 ID1～5 配置正向(+1/-1)与最大 deg/s，五轴默认全部 +1，共用 SERVO_MAX_SPEED_DEG_S（30°/s）。
-每轴软限位使用 SERVO_DEVICE_TABLE 的 minimum/maximum（P 值）。500～2500 只是协议范围，
-必须按关节装配标定后收窄。配置非法时 config_valid=0，不启动遥控；不修改舵机内部 PID。
+每轴使用设备表与当前模式的有效范围。配置非法时 config_valid=0，不启动遥控；不修改舵机内部 PID。
 
 上电先观察 CH9=+1，再选择组。该组涉及的摇杆轴回中 300 ms，停止事务处理完且对应舵机位置新鲜、
 模式为 1～4、当前位置在软限位内，才从实际回读位置建立目标。离线轴不阻止其他在线轴启用。
@@ -164,8 +175,10 @@ ServoState state;
 Servo_CopyState(1, &state);
 ```
 
-调用只提交请求，返回 QUEUED 不等于已经执行或到位。position 为 500～2500 且须在该轴软限位内，
-众灵位置指令的 time_ms 为 0～9999 ms。固件按量化后的输出轴位移和公共速度上限向上取整计算最短时长，保留调用方给出的较长时长。在 30°/s 下，270° 的全行程至少需要 9000 ms。计算出的时长超过 9999 ms 时返回 RANGE。
+调用只提交请求，返回 QUEUED 不等于已经执行或到位。`position` 以 P 值表示，须在该轴有效范围内。
+`Servo_GetEffectiveRange(slot, &state, &minimum, &maximum)` 用指定的状态计算有效范围，状态参数为 `NULL` 时按未知模式计算。
+`Servo_GetConfig` 读取设备表配置。目标在入队及实际发送前都要通过有效范围检查，越界返回 RANGE。
+众灵位置指令的 time_ms 为 0～9999 ms。固件按量化后的输出轴位移和公共速度上限向上取整计算最短时长，保留调用方给出的较长时长。计算出的时长超过 9999 ms 时返回 RANGE。
 
 16 条静态请求队列；同一 ID 尚未发送的位置更新合并为最新目标，计入 coalesced。
 停止/暂停/释力请求优先于队列中的普通请求，并取消该轴尚未发出的运动/继续/恢复扭力请求。
@@ -220,7 +233,7 @@ QUEUED 仅为入队确认，真实结果看该 ID 的 last ticket/result 和新�
 可能结果：OK、QUEUED、BUSY、INVALID、RANGE、OFFLINE、BAD_MODE、NOT_READY、DISABLED、TX_ERROR、UART_ERROR、TIMEOUT。
 
 servo_status 用 SERVO_STATUS BEGIN/END 包围，包含 enabled/init、uart_ready、queued、错误/溢出/畸形/非预期帧计数，
-各 ID 的 model、online、position、age_ms、mode/mode_valid、version、range、target、ticket/result、timeouts。
+各 ID 的 model、online、position、age_ms、mode/mode_valid、version、range、target、ticket/result、timeouts。`range` 显示该轴按当前模式计算的有效 P 值范围。
 未收到位置显示 NA；离线保留最后位置并显示 online=0。target=0 代表尚未成功发出位置命令，不是有效位置目标。
 mode_valid 表示确实收到模式回读；未知模式不猜测为 270 度。版本返回值只存字符串，不据此猜测扩展协议。
 

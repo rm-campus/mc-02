@@ -79,6 +79,33 @@ static int slot_for(uint8_t id)
 }
 const ServoConfig *Servo_GetConfig(unsigned i) { return i<SERVO_COUNT ? &configs[i] : NULL; }
 
+static bool zp_has_180_degree_span(const ServoState *s)
+{
+    return s && s->mode_valid && (s->mode==3U || s->mode==4U);
+}
+
+bool Servo_GetEffectiveRange(unsigned slot,const ServoState *state,uint16_t *minimum,uint16_t *maximum)
+{
+    if(slot>=SERVO_COUNT)return false;
+    /* P1500 为中心。270° 模式向内取整，未知及非位置模式使用相同的保守限位。 */
+    const unsigned span=fashionstar_slot(slot) ? 360U : (zp_has_180_degree_span(state) ? 180U : 270U);
+    unsigned radius=2000U*SERVO_POSITION_LIMIT_DEG/span;
+    if(radius>1000U)radius=1000U;
+    uint16_t lower=(uint16_t)(1500U-radius),upper=(uint16_t)(1500U+radius);
+    if(lower<configs[slot].minimum)lower=configs[slot].minimum;
+    if(upper>configs[slot].maximum)upper=configs[slot].maximum;
+    if(lower>upper)return false;
+    if(minimum)*minimum=lower;
+    if(maximum)*maximum=upper;
+    return true;
+}
+
+static bool position_in_range(unsigned slot,const ServoState *s,uint16_t position)
+{
+    uint16_t minimum,maximum;
+    return Servo_GetEffectiveRange(slot,s,&minimum,&maximum) && position>=minimum && position<=maximum;
+}
+
 static uint16_t move_time_max(unsigned slot)
 {
     return fashionstar_slot(slot) ? UINT16_MAX : 9999U;
@@ -99,7 +126,7 @@ static unsigned travel_mdeg_per_unit(unsigned slot,const ServoState *s)
 {
     if(fashionstar_slot(slot))return 100U;
     /* 正式遥控允许缺少 PMOD，此时按较大的 270° 行程限速。 */
-    return s->mode_valid && (s->mode==3U || s->mode==4U) ? 90U : 135U;
+    return zp_has_180_degree_span(s) ? 90U : 135U;
 }
 
 static unsigned travel_distance(uint16_t start,uint16_t target)
@@ -283,9 +310,10 @@ static void finish_jog_request(ServoResult result,uint32_t now,const ZpReply *re
         if(step==0) { jog_done("BAD_CONFIG"); break; }
         bool increase=(jog.direction==1U)==((jog.mode&1U)!=0U);
         int target=(int)jog.report.start+(increase?step:-step);
-        const ServoConfig *c=&configs[jog.slot];
-        if(jog.report.start<c->minimum || jog.report.start>c->maximum ||
-           target<c->minimum || target>c->maximum) { jog_done("LIMIT"); break; }
+        uint16_t minimum,maximum;
+        if(!Servo_GetEffectiveRange(jog.slot,&work.device[jog.slot],&minimum,&maximum) ||
+           jog.report.start<minimum || jog.report.start>maximum ||
+           target<minimum || target>maximum) { jog_done("LIMIT"); break; }
         jog.report.target=(uint16_t)target;
         jog.phase=JOG_MOVE;
         break;
@@ -456,13 +484,13 @@ static ServoResult validate_motion(ServoControlOwner owner,unsigned slot,uint16_
     if(!bus_slot_active(slot))return SERVO_DISABLED;
     if(motion_requires_reset() || mode_work.ticket)return SERVO_BUSY;
     if(!published.initialized)return SERVO_NOT_READY;
-    if(p<configs[slot].minimum || p>configs[slot].maximum || ms>move_time_max(slot))return SERVO_RANGE;
+    const ServoState *s=&published.device[slot];
+    if(!position_in_range(slot,s,p) || ms>move_time_max(slot))return SERVO_RANGE;
     if(owner==SERVO_OWNER_NONE) {
         if(control_owner!=SERVO_OWNER_NONE)return SERVO_BUSY;
     } else if(!owner_valid(owner) || control_owner!=owner || !(control_claimed&(1U<<slot)) ||
         ((control_stops[owner]|control_inhibited[owner])&(1U<<slot)) ||
         (owner==SERVO_OWNER_ARM && control_inhibited[owner]))return SERVO_BUSY;
-    const ServoState *s=&published.device[slot];
     if(!motion_position_ready(s,owner,now))return SERVO_OFFLINE;
     if(position_mode_required(owner) && (!s->mode_valid || s->mode<1U || s->mode>4U))return SERVO_BAD_MODE;
     if(!fashionstar_slot(slot) && move_duration(slot,s,travel_distance(s->position,p),ms)>move_time_max(slot))
@@ -686,8 +714,9 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
 {
     ServoState *s=&work.device[current.slot];
     const bool robot_rc = ROBOT_CONTROL_ENABLE && current.owner == SERVO_OWNER_RC;
+    const bool range_rejected=phase==IDLE && result==SERVO_RANGE;
     if(current.ticket) { s->last_ticket=current.ticket; s->last_result=result; }
-    if(owner_valid(current.owner) && (result!=SERVO_OK || current.op==ZP_STOP)) {
+    if(owner_valid(current.owner) && ((result!=SERVO_OK && !range_rejected) || current.op==ZP_STOP)) {
         taskENTER_CRITICAL();
         if(current.op==ZP_STOP)control_stops[current.owner]&=(uint8_t)~(1U<<current.slot);
         if(result!=SERVO_OK) {
@@ -757,7 +786,7 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
     finish_jog_request(result,now,reply);
 #endif
     if(mode_current) { finish_mode(result,now,reply); mode_current=false; }
-    if(result!=SERVO_OK) {
+    if(result!=SERVO_OK && !range_rejected) {
         hardware_ready=ServoUart_Recover();
         guard=now+SERVO_RECOVERY_QUIET_MS;
     } else guard=now+(SERVO_FASHIONSTAR_GRIPPER ? 6U : SERVO_BUS_GAP_MS);
@@ -1113,7 +1142,11 @@ void Servo_Process(uint32_t now)
 #if SERVO_JOG_TEST_ENABLE
             else if(current.op==ZP_MOVE && s->mode!=jog.mode)finish(SERVO_BAD_MODE,now,NULL);
 #endif
-            else if(current.op==ZP_MOVE && !limit_current_move(s))finish(SERVO_RANGE,now,NULL);
+            else if(current.op==ZP_MOVE && (!position_in_range(current.slot,s,current.position) ||
+                                           !limit_current_move(s)))finish(SERVO_RANGE,now,NULL);
+            /* 模式变化后，之前已暂停的已知目标也必须仍在当前有效区间内才可续行。 */
+            else if(current.op==ZP_RESUME && travel[current.slot].active && travel[current.slot].paused &&
+                    !position_in_range(current.slot,s,travel[current.slot].target))finish(SERVO_RANGE,now,NULL);
             else {
                 char frame[ZP_FRAME_MAX];
                 size_t n;

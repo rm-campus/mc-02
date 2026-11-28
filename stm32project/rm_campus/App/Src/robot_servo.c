@@ -37,15 +37,16 @@ static int axis_stick(const RobotControlState *control, unsigned id)
     }
 }
 
-static float gripper_goal(int stick)
+static float gripper_goal(int stick, uint16_t minimum, uint16_t maximum)
 {
     const float fraction=(stick+660)/1320.0f;
 #if SERVO_FASHIONSTAR_GRIPPER
     const int angle=(int)lroundf(FS_GRIPPER_OPEN_DDEG+fraction*FS_GRIPPER_TRAVEL_DDEG);
-    return FsServo_PulseFromAngle(angle);
+    const float goal=FsServo_PulseFromAngle(angle);
 #else
-    return ROBOT_GRIPPER_OPEN_P+fraction*((float)ROBOT_GRIPPER_CLOSED_P-ROBOT_GRIPPER_OPEN_P);
+    const float goal=ROBOT_GRIPPER_OPEN_P+fraction*((float)ROBOT_GRIPPER_CLOSED_P-ROBOT_GRIPPER_OPEN_P);
 #endif
+    return fminf(maximum,fmaxf(minimum,goal));
 }
 
 bool RobotServo_PriorityMove(unsigned slot, uint32_t ticket, uint32_t now)
@@ -56,7 +57,10 @@ bool RobotServo_PriorityMove(unsigned slot, uint32_t ticket, uint32_t now)
     if (!latest.ready || latest.generation != generation || !selected_id(latest.mode, id)) return false;
     const int stick = axis_stick(&latest, id);
     if (id==5) {
-        const long goal=lroundf(gripper_goal(stick));
+        ServoState state;
+        uint16_t minimum, maximum;
+        if (!Servo_CopyState(id,&state) || !Servo_GetEffectiveRange(slot,&state,&minimum,&maximum)) return false;
+        const long goal=lroundf(gripper_goal(stick,minimum,maximum));
         return priority_direction[slot]>0 ? goal>=priority_grip_pulse : goal<=priority_grip_pulse;
     }
     return stick*priority_direction[slot]>0;
@@ -71,11 +75,6 @@ bool RobotServo_CanTransmit(uint8_t id, uint32_t now)
 {
     RobotControlState latest = RobotControl_Get(now);
     return latest.ready && latest.generation == generation && selected_id(latest.mode, id);
-}
-
-static bool usable(const ServoState *s, const ServoConfig *c)
-{
-    return s->position_seen && s->position >= c->minimum && s->position <= c->maximum;
 }
 
 bool RobotServo_Process(uint32_t now)
@@ -125,12 +124,13 @@ bool RobotServo_Process(uint32_t now)
     float dt=(elapsed>SERVO_RC_MAX_PERIOD_MS ? SERVO_RC_PERIOD_MS : elapsed)*0.001f;
     bool motion_requested = false;
     for (unsigned slot=0; slot<SERVO_COUNT; ++slot) {
-        const ServoConfig *c=Servo_GetConfig(slot);
-        const unsigned id=c->id;
+        const unsigned id=Servo_GetConfig(slot)->id;
         uint8_t bit=(uint8_t)(1U<<slot);
         if (!(selected&bit) || id==0 || id>5) continue;
         ServoState s;
-        if (!Servo_CopyState(id,&s) || !usable(&s,c) || (Servo_RcInhibited()&bit)) {
+        uint16_t minimum, maximum;
+        if (!Servo_CopyState(id,&s) || !s.position_seen || (Servo_RcInhibited()&bit) ||
+            !Servo_GetEffectiveRange(slot,&s,&minimum,&maximum) || s.position<minimum || s.position>maximum) {
             priority_slots&=(uint8_t)~bit;
             if (id==5) { grip_settled=false; grip_stick_changed=true; }
             if (initialized&bit) {
@@ -158,7 +158,7 @@ bool RobotServo_Process(uint32_t now)
 #if !SERVO_FASHIONSTAR_GRIPPER
             if (ROBOT_GRIPPER_CLOSED_P==0U) continue;
 #endif
-            goal=gripper_goal(input);
+            goal=gripper_goal(input,minimum,maximum);
             /* 非回中夹爪从任意已到达的目标再次拨动时，只优先首条新目标。 */
             if (input!=grip_stick) {
                 if (grip_settled) {
@@ -174,8 +174,8 @@ bool RobotServo_Process(uint32_t now)
             *target+=fminf(step,fmaxf(-step,goal-*target));
         } else {
             const int stick=input*axes[id-1].direction;
-            motion_requested |= (stick > ROBOT_SERVO_DEFER_POLL_STICK && *target < c->maximum) ||
-                                (stick < -ROBOT_SERVO_DEFER_POLL_STICK && *target > c->minimum);
+            motion_requested |= (stick > ROBOT_SERVO_DEFER_POLL_STICK && *target < maximum) ||
+                                (stick < -ROBOT_SERVO_DEFER_POLL_STICK && *target > minimum);
             if (!update) continue;
             *target+=(float)stick*(1.0f/660.0f)*step;
             if (id==3 || id==4) {
@@ -184,11 +184,10 @@ bool RobotServo_Process(uint32_t now)
                 *target=fminf(s.position+lead,fmaxf(s.position-lead,*target));
             }
         }
-        *target=fminf(c->maximum,fmaxf(c->minimum,*target));
+        *target=fminf(maximum,fmaxf(minimum,*target));
         uint16_t pulse=(uint16_t)lroundf(*target);
         if (id==5) {
-            const float limited_goal=fminf(c->maximum,fmaxf(c->minimum,goal));
-            grip_settled=!grip_stick_changed && lroundf(limited_goal)==pulse;
+            grip_settled=!grip_stick_changed && lroundf(goal)==pulse;
             grip_stick_changed=false;
         }
         uint32_t ticket;
