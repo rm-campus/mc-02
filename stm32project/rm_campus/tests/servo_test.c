@@ -27,6 +27,7 @@ static unsigned slow_mode_reply_mask;
 static uint32_t slow_reply_due;
 static char slow_reply[32];
 static uint16_t positions[5]={1500,1500,1500,1500,1500};
+static unsigned motion_hold_mask;
 static unsigned modes[5]={1,1,1,1,1};
 #if SERVO_FASHIONSTAR_GRIPPER
 static unsigned fs_moves, fs_holds, fs_queries, fs_misses_after_zp, fs_misses;
@@ -64,6 +65,9 @@ int HAL_UART_Transmit_IT(UART_HandleTypeDef *h,const uint8_t *p,uint16_t n)
     }
 #endif
     assert(n>=2U && n<sizeof(tx) && p[n-1U]=='!');
+#if ROBOT_CONTROL_ENABLE
+    assert(n<4U || memcmp(p,"#001",4U)!=0); /* 正式固件在线上不出现任何 001 帧。 */
+#endif
     assert(!memchr(p,'\r',n) && !memchr(p,'\n',n));
     if(fail_tx && n==15U && p[9]=='T'){fail_tx=false;return HAL_ERROR;} /* Fail the motion, not an intervening due query. */
     memcpy(tx,p,n);tx[n]=0;tx_pending=true;tx_due=tick+2;++tx_count;
@@ -134,7 +138,11 @@ static void bus_step(void)
     fs_misses=fs_misses_after_zp;
 #endif
     unsigned id=0,p=0,ms=0; assert(sscanf(tx,"#%3u",&id)==1&&id>=1&&id<=5);
-    if(sscanf(tx,"#%3uP%4uT%4u!",&id,&p,&ms)==3) { positions[id-1]=(uint16_t)p;++moves;return; }
+    if(sscanf(tx,"#%3uP%4uT%4u!",&id,&p,&ms)==3) {
+        if (!(motion_hold_mask & (1U<<(id-1U)))) positions[id-1]=(uint16_t)p;
+        ++moves;
+        return;
+    }
     if(!(reply_mask&(1U<<(id-1))))return;
     char reply[64];
     bool field_format=(field_reply_mask & (1U<<(id-1U)))!=0;

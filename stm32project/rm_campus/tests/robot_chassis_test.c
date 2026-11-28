@@ -29,7 +29,6 @@ bool Can_Send(uint32_t id,const uint8_t *bytes,uint8_t size)
     for(unsigned i=0;i<4;++i) {
         int16_t current=(int16_t)((uint16_t)bytes[i*2]<<8|bytes[i*2+1]);
         if(now>=70 && now<90) assert((i%2==0)?current>0:current<0);
-        else if(now>=230 && now<400) assert(current>0);
         else assert(current==0);
     }
     return true;
@@ -74,6 +73,6 @@ int main(void)
     now=0; Fxi6x_OnStreamBreak(); frames();
     if(!setjmp(done))Campus_StatusTask(NULL);
     assert(beeps==1 && !tone && !depth);
-    puts("PASS: one CAN frame per tick, CH7-independent startup, wrist turn, loss at 100ms, mode LEDs and buzzer");
+    puts("PASS: one CAN frame per tick, upper CH2 commands forward translation, servo gears keep wheels stopped, mode LEDs and buzzer");
     return 0;
 }

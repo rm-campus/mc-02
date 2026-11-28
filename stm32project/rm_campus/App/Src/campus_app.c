@@ -261,7 +261,7 @@ void Campus_ChassisTask(void *argument)
         Mecanum_RobotTargets(&robot, configs[0].max_speed, targets);
         const bool drive_neutral = targets[0] == 0.0f && targets[1] == 0.0f &&
                                    targets[2] == 0.0f && targets[3] == 0.0f;
-        frame.mecanum_mode = robot.mode == ROBOT_DRIVE || robot.mode == ROBOT_WRIST;
+        frame.mecanum_mode = robot.mode == ROBOT_DRIVE;
         if (drive_generation != robot.generation) {
             for (unsigned i=0;i<4U;++i) MotorDebug_Init(&frame.wheel[i].control);
             drive_generation=robot.generation;

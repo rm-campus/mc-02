@@ -38,6 +38,12 @@
 #define ROBOT_LINK_TIMEOUT_MS 100U
 #define ROBOT_SWITCH_STABLE_MS 30U
 
+/* 整机肩、肘与腕轴的速度倍率。舵机表的默认 30°/s 经此提高至 90°/s。 */
+#ifndef ROBOT_JOINT_SPEED_SCALE
+#define ROBOT_JOINT_SPEED_SCALE 3.0f
+#endif
+/* 003 肩关节、004 腕滚转的目标最多比最新实测位置领先或落后 300 P。 */
+#define ROBOT_SHOULDER_WRIST_MAX_LEAD_P 300
 /* 仅用于推杆时延后后台轮询，不改变关节的摇杆死区。 */
 #define ROBOT_SERVO_DEFER_POLL_STICK 20
 
@@ -49,23 +55,17 @@
 #error "Robot chassis translation deadband must be in 0..659"
 #endif
 
-/* 轮端 rpm、车体角速度 °/s。上下档各自可调。尺寸单位 m，轮心到轮心的全距。 */
+/* 轮端 rpm、车体角速度 °/s。尺寸单位 m，轮心到轮心的全距。 */
 #ifndef ROBOT_CHASSIS_MAX_WHEEL_RPM
 #define ROBOT_CHASSIS_MAX_WHEEL_RPM 400.0f
 #endif
 #ifndef ROBOT_UPPER_MAX_YAW_DEG_S
 #define ROBOT_UPPER_MAX_YAW_DEG_S 90.0f
 #endif
-#ifndef ROBOT_LOWER_MAX_YAW_DEG_S
-#define ROBOT_LOWER_MAX_YAW_DEG_S 30.0f
-#endif
 #define ROBOT_WHEEL_RADIUS_M 0.075f
-/* 未填实车尺寸时按旧麦轮的轮端转速比例转向；上、下档可分别调整。 */
+/* 未填实车尺寸时按旧麦轮的轮端转速比例转向。 */
 #ifndef ROBOT_UPPER_TURN_FRACTION
 #define ROBOT_UPPER_TURN_FRACTION 1.0f
-#endif
-#ifndef ROBOT_LOWER_TURN_FRACTION
-#define ROBOT_LOWER_TURN_FRACTION (1.0f / 3.0f)
 #endif
 #ifndef ROBOT_WHEELBASE_M
 #define ROBOT_WHEELBASE_M 0.0f

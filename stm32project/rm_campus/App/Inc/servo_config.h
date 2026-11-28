@@ -56,6 +56,14 @@
 #define SERVO_RC_AXIS_TABLE \
     {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}, {1, 30.0f}
 #define SERVO_COUNT 5U
+#if ROBOT_CONTROL_ENABLE
+/* P1500 ± 555 P。270° 位置模式下向内取整，行程不超过 ±75°。 */
+#define SERVO_SHOULDER_MIN_P 945U
+#define SERVO_SHOULDER_MAX_P 2055U
+#else
+#define SERVO_SHOULDER_MIN_P 834U
+#define SERVO_SHOULDER_MAX_P 2166U
+#endif
 #ifndef SERVO_FASHIONSTAR_GRIPPER
 #define SERVO_FASHIONSTAR_GRIPPER 0
 #endif
@@ -64,25 +72,32 @@
 #endif
 #if SERVO_FASHIONSTAR_GRIPPER
 #define SERVO_GRIPPER_MODEL "U25-M"
-/* 当前共线台架：测试夹爪时暂停众灵轮询，避免另一协议反复打断二进制接收。 */
+/* 待机和夹爪档只轮询 U25-M，其余档轮询众灵，减少两种协议交替发帧。 */
 #ifndef FS_GRIPPER_BENCH_ISOLATION
 #define FS_GRIPPER_BENCH_ISOLATION 1
 #endif
-/* 空载试验先使用 10° 合拢行程和 2.5 W 指令。机构装好后按实测标定方向及行程。 */
+/* 夹爪实测开端 P2180、闭合端 P1600，角度单位 0.1°。 */
+#ifndef FS_GRIPPER_OPEN_DDEG
+#define FS_GRIPPER_OPEN_DDEG 1224
+#endif
 #ifndef FS_GRIPPER_TRAVEL_DDEG
-#define FS_GRIPPER_TRAVEL_DDEG 100
+#define FS_GRIPPER_TRAVEL_DDEG (-1044)
+#endif
+#if FS_GRIPPER_OPEN_DDEG < -1800 || FS_GRIPPER_OPEN_DDEG > 1800 || \
+    FS_GRIPPER_OPEN_DDEG + FS_GRIPPER_TRAVEL_DDEG < -1800 || \
+    FS_GRIPPER_OPEN_DDEG + FS_GRIPPER_TRAVEL_DDEG > 1800 || FS_GRIPPER_TRAVEL_DDEG == 0
+#error "Fashion Star gripper endpoints must form a nonzero stroke within -180 to 180 degrees"
 #endif
 #define FS_GRIPPER_POWER_MW 2500U
 #else
 #define SERVO_GRIPPER_MODEL "ZP25S"
 #define FS_GRIPPER_BENCH_ISOLATION 0
 #endif
-/* 先逐台配置 ID，再并联。这里只描述设备，不向舵机写 ID/波特率/模式/PID。
- * ID3 肩关节以 P1500 为中心。270° 位置模式下向内取整，90° 对应 666 P。 */
+/* 先逐台配置 ID，再并联。这里只描述设备，不向舵机写 ID/波特率/模式/PID。 */
 #define SERVO_DEVICE_TABLE \
     {1U, "ZP30", 500U, 2500U}, \
     {2U, "ZP35", 500U, 2500U}, \
-    {3U, "ZP45", 834U, 2166U}, \
+    {3U, "ZP45", SERVO_SHOULDER_MIN_P, SERVO_SHOULDER_MAX_P}, \
     {4U, "ZP25S", 500U, 2500U}, \
     {5U, SERVO_GRIPPER_MODEL, 500U, 2500U}
 /* 500～2500 是协议范围，装配后仍需按实测机械行程逐轴标定。 */

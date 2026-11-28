@@ -26,8 +26,12 @@ with tempfile.TemporaryDirectory() as d:
                         "-DROBOT_CONTROL_ENABLE=1", *geometry, "-I", str(directory), "-I", "App/Inc",
                         "-I", "Bsp/Inc", *sources, "-lm", "-o", str(exe)], check=True,cwd=root)
         subprocess.run([str(exe)], check=True)
+        subprocess.run([str(exe), "sparse"], check=True)
+        subprocess.run([str(exe), "wrist-silence"], check=True)
+        subprocess.run([str(exe), "joint-lead-limit"], check=True)
     subprocess.run([args.cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-DROBOT_CONTROL_ENABLE=1", "-DSERVO_FASHIONSTAR_GRIPPER=1",
                     "-I", str(directory), "-I", "App/Inc", "-I", "Bsp/Inc",
                     *sources, "-lm", "-o", str(exe)], check=True, cwd=root)
     subprocess.run([str(exe), "fashionstar"], check=True)
+    subprocess.run([str(exe), "joint-lead-limit"], check=True)

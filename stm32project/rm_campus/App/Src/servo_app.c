@@ -52,6 +52,11 @@ static bool mode_current, mode_verify, mode_yield_poll;
 #define MODE_BATCH_TIMEOUT_MS 4000U
 
 static bool due(uint32_t now, uint32_t when) { return (int32_t)(now-when)>=0; }
+static bool bus_slot_active(unsigned slot)
+{
+    /* 保留示波器槽位；正式遥控的腕俯仰 001 不参与任何 UART7 事务。 */
+    return !ROBOT_CONTROL_ENABLE || configs[slot].id != 1U;
+}
 static bool fashionstar_slot(unsigned slot)
 {
     return SERVO_FASHIONSTAR_GRIPPER && configs[slot].id == 5U;
@@ -269,7 +274,12 @@ static bool motion_requires_reset(void)
     return false;
 #endif
 }
-static uint8_t valid_slots(void) { return (uint8_t)((1U<<SERVO_COUNT)-1U); }
+static uint8_t valid_slots(void)
+{
+    uint8_t mask=0;
+    for(unsigned i=0;i<SERVO_COUNT;++i)if(bus_slot_active(i))mask|=(uint8_t)(1U<<i);
+    return mask;
+}
 /* 由调用者持有短临界区，返回本控制源尚未完成的停止/手动暂停事务。 */
 static uint8_t pending_stops(ServoControlOwner owner)
 {
@@ -359,8 +369,15 @@ static bool position_mode_required(ServoControlOwner owner)
 {
     return !ROBOT_CONTROL_ENABLE || owner != SERVO_OWNER_RC;
 }
+static bool motion_position_ready(const ServoState *s, ServoControlOwner owner, uint32_t now)
+{
+    /* 整机遥控使用最后一次有效位置；调试和 IK 仍要求在线的实时位置。 */
+    if(ROBOT_CONTROL_ENABLE && owner==SERVO_OWNER_RC)return s->position_seen;
+    return s->online && (uint32_t)(now-s->position_ms)<SERVO_POSITION_STALE_MS;
+}
 static ServoResult validate_motion(ServoControlOwner owner,unsigned slot,uint16_t p,uint16_t ms,uint32_t now)
 {
+    if(!bus_slot_active(slot))return SERVO_DISABLED;
     if(motion_requires_reset() || mode_work.ticket)return SERVO_BUSY;
     if(!published.initialized)return SERVO_NOT_READY;
     if(p<configs[slot].minimum || p>configs[slot].maximum || ms>9999U)return SERVO_RANGE;
@@ -370,7 +387,7 @@ static ServoResult validate_motion(ServoControlOwner owner,unsigned slot,uint16_
         ((control_stops[owner]|control_inhibited[owner])&(1U<<slot)) ||
         (owner==SERVO_OWNER_ARM && control_inhibited[owner]))return SERVO_BUSY;
     const ServoState *s=&published.device[slot];
-    if(!s->online || (uint32_t)(now-s->position_ms)>=SERVO_POSITION_STALE_MS)return SERVO_OFFLINE;
+    if(!motion_position_ready(s,owner,now))return SERVO_OFFLINE;
     if(position_mode_required(owner) && (!s->mode_valid || s->mode<1U || s->mode>4U))return SERVO_BAD_MODE;
     return SERVO_QUEUED;
 }
@@ -385,6 +402,7 @@ static ServoResult enqueue(uint8_t id,ZpOperation op,uint16_t p,uint16_t ms,uint
     if(ticket)*ticket=0;
     if(SERVO_STATUS_ONLY || !SERVO_BUS_ENABLE)return SERVO_DISABLED;
     int slot=slot_for(id);if(slot<0)return SERVO_INVALID;
+    if(!bus_slot_active((unsigned)slot))return SERVO_DISABLED;
     taskENTER_CRITICAL();
     ServoState *s=&published.device[slot];
     ServoResult result=SERVO_QUEUED;
@@ -392,7 +410,7 @@ static ServoResult enqueue(uint8_t id,ZpOperation op,uint16_t p,uint16_t ms,uint
     else if(op==ZP_MOVE)result=validate_motion(owner,(unsigned)slot,p,ms,HAL_GetTick());
     else if(!published.initialized)result=SERVO_NOT_READY;
     else if(is_motion(op) && control_owner!=SERVO_OWNER_NONE)result=SERVO_BUSY;
-    else if(is_motion(op) && (!s->online || (uint32_t)(HAL_GetTick()-s->position_ms)>=SERVO_POSITION_STALE_MS))result=SERVO_OFFLINE;
+    else if(is_motion(op) && !motion_position_ready(s,owner,HAL_GetTick()))result=SERVO_OFFLINE;
     if(result!=SERVO_QUEUED) { taskEXIT_CRITICAL();return result; }
     if(is_halt(op)) {
         cancel_moves((unsigned)slot);
@@ -462,6 +480,7 @@ static ServoResult request_modes(uint8_t position_mode, int probe_slot, uint32_t
 {
     if(ticket)*ticket=0U;
     if(SERVO_STATUS_ONLY || !SERVO_BUS_ENABLE)return SERVO_DISABLED;
+    if(probe_slot>=0 && !bus_slot_active((unsigned)probe_slot))return SERVO_DISABLED;
     if(!ticket)return SERVO_INVALID;
     taskENTER_CRITICAL();
     ServoResult result=SERVO_QUEUED;
@@ -600,9 +619,12 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
         }
         taskEXIT_CRITICAL();
         if(robot_rc && result!=SERVO_OK) {
-            /* 同档恢复从故障后读到的位置开始，丢弃旧的运动目标。 */
+            /* 动作或停止帧自身发送失败时，重新读取位置再接管。 */
             s->online=false;
+            s->position_seen=false;
+            s->mode_valid=false;
             s->target=0;
+            boot_phase[current.slot]=3;
             next_poll[current.slot]=now;
         }
     }
@@ -648,7 +670,8 @@ static void finish(ServoResult result,uint32_t now,const ZpReply *reply)
     } else guard=now+(SERVO_FASHIONSTAR_GRIPPER ? 6U : SERVO_BUS_GAP_MS);
 #if SERVO_FASHIONSTAR_GRIPPER
     if (fashionstar_slot(current.slot) && current.op==ZP_POSITION) {
-        fs_aligned=result==SERVO_OK;
+        /* 已经收到过位置时，切换协议后尝试找回回包即可继续遥控。 */
+        fs_aligned=result==SERVO_OK || (result==SERVO_TIMEOUT && phase==REPLY && s->position_seen);
         fs_repeat=false;
         fs_attempts=0U;
     }
@@ -744,6 +767,7 @@ static bool take_poll(uint32_t now,bool positions_only)
     uint32_t oldest_age=0;
     unsigned oldest=SERVO_COUNT;
     for(unsigned i=0;i<SERVO_COUNT;++i) {
+        if(FS_GRIPPER_BENCH_ISOLATION && fashionstar_slot(i))continue;
         const ServoState *s=&work.device[i];
         uint32_t age=now-s->position_ms;
         if(s->online && age>oldest_age) { oldest=i; oldest_age=age; }
@@ -760,9 +784,12 @@ static bool take_poll(uint32_t now,bool positions_only)
     if(!positions_only && take_metadata_retry(now,oldest_age))return true;
     for(unsigned n=0;n<SERVO_COUNT;++n) {
         unsigned i=poll_slot; poll_slot=(uint8_t)((poll_slot+1U)%SERVO_COUNT);
+        if(!bus_slot_active(i))continue;
         if(!due(now,next_poll[i]))continue;
         if(FS_GRIPPER_BENCH_ISOLATION && fashionstar_slot(i))continue;
-        if(positions_only && !work.device[i].online)continue;
+        if(positions_only && !work.device[i].online &&
+           !(ROBOT_CONTROL_ENABLE && control_owner==SERVO_OWNER_RC &&
+             (control_claimed&(1U<<i)) && work.device[i].position_seen))continue;
         next_slot=now+SERVO_POLL_SLOT_MS;
         const ZpOperation ops[]={ZP_ID,ZP_VERSION,ZP_MODE,ZP_POSITION};
         ZpOperation op=ops[boot_phase[i]];
@@ -777,6 +804,9 @@ static bool take_poll(uint32_t now,bool positions_only)
 static bool take_mode_request(uint32_t now)
 {
     if(!mode_work.ticket || !due(now,mode_due))return false;
+    while(mode_slot<mode_end_slot && !bus_slot_active(mode_slot))
+        mode_work.result[mode_slot++]=SERVO_DISABLED;
+    if(mode_slot==mode_end_slot) { publish_modes(); return false; }
     current=(Request){.slot=mode_slot,.op=mode_verify ? ZP_MODE : ZP_SET_MODE,
                       .position=mode_work.requested_mode};
     if(mode_verify)++mode_attempt;
@@ -855,7 +885,7 @@ void Servo_Process(uint32_t now)
     jog_tick(now);
 #endif
 #if ROBOT_CONTROL_ENABLE
-    const bool positions_only=RobotServo_Process(now) && SERVO_FASHIONSTAR_GRIPPER;
+    const bool positions_only=RobotServo_Process(now);
 #else
     const bool positions_only=false;
     ServoRc_Process(now);
@@ -864,7 +894,8 @@ void Servo_Process(uint32_t now)
         ServoState *s=&work.device[i];
         if(s->online && (s->failures>=SERVO_FAIL_LIMIT || (uint32_t)(now-s->position_ms)>=SERVO_POSITION_STALE_MS)) {
             s->online=false; s->mode_valid=false; boot_phase[i]=3;
-            cancel_moves(i);
+            if(!ROBOT_CONTROL_ENABLE || control_owner!=SERVO_OWNER_RC || !(control_claimed&(1U<<i)))
+                cancel_moves(i);
             taskENTER_CRITICAL();arm_failure(i);taskEXIT_CRITICAL();
         }
     }
@@ -940,12 +971,13 @@ void Servo_Process(uint32_t now)
             request_started=now;
             ServoState *s=&work.device[current.slot];
             bool motion=current.op==ZP_MOVE || current.op==ZP_RESUME || current.op==ZP_TORQUE_ON;
-            if(motion && motion_requires_reset())finish(SERVO_BUSY,now,NULL);
+            if(!bus_slot_active(current.slot))finish(SERVO_DISABLED,now,NULL);
+            else if(motion && motion_requires_reset())finish(SERVO_BUSY,now,NULL);
             else if(owner_valid(current.owner) && current.op==ZP_MOVE &&
                 (control_owner!=current.owner || !(control_claimed&(1U<<current.slot)) ||
                  ((control_inhibited[current.owner]|control_stops[current.owner])&(1U<<current.slot)) ||
                  (current.owner==SERVO_OWNER_ARM && control_inhibited[current.owner])))finish(SERVO_BUSY,now,NULL);
-            else if(motion && (!s->online || (uint32_t)(now-s->position_ms)>=SERVO_POSITION_STALE_MS))finish(SERVO_OFFLINE,now,NULL);
+            else if(motion && !motion_position_ready(s,current.owner,now))finish(SERVO_OFFLINE,now,NULL);
             else if(current.op==ZP_MOVE && position_mode_required(current.owner) &&
                     (!s->mode_valid || s->mode<1U || s->mode>4U))finish(SERVO_BAD_MODE,now,NULL);
 #if SERVO_JOG_TEST_ENABLE
